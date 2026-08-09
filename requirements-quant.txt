@@ -1,0 +1,17 @@
+# 量化层(tradingagents.quant)独立依赖 - 仅 standalone 场景用
+#
+# 正常安装:pip install -e .
+#   主依赖(pyproject.toml [project.dependencies])已包含 pandas/numpy/pyarrow/
+#   requests/pytz,无需额外安装本文件。
+#
+# Standalone 场景(只跑 cli/quant_pick.py,不装 LangChain/mootdx 等):
+#   pip install -r requirements-quant.txt
+#   注意:此模式仅支持 quant-pick 子命令,LLM analyze 命令不可用。
+#
+# 推荐做法:用 pyproject.toml 主依赖,忽略本文件。
+
+pandas>=2.3.0
+numpy>=1.24
+pyarrow>=14.0
+requests>=2.32.4
+pytz>=2025.2

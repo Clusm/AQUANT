@@ -6,6 +6,152 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes within the 0.x line are called out explicitly.
 
+## [0.3.1] — 2026-08-09
+
+上线前审计(AUDIT_REPORT.md)v0.3.1 跟进清单收尾:补齐 8 个新模块的剩余单元测试 + 清理 P2/P3 遗留项。
+
+### Added - 单元测试(审核 P1 #2 剩余)
+
+- **`tests/test_quant_picker.py`**(29 用例):`_compute_entry_advice` 入场建议(短/中线/无数据 N/A)、`get_tier_of` 分级 + 中线 `M_` 前缀、`needs_full_data` 周月季判断、`_aggregate`/`compute_top_n` 按代码分组聚合(加权分/加权胜率/加权持仓天/tier 计数/排序切片)、`format_top_picks_summary` 摘要格式化、`pick()` top_n 5/10/20 参数校验。
+- **`tests/test_quant_pick_component.py`**(10 用例):`web/components/quant_pick.py` 抽出的 `_prepare_display_df`(rank/名称/胜率/持仓格式化)+ `_select_all_updates`(全选联动 session_state 更新)。
+- **`tests/test_cli_quant_pick.py`**(14 用例):`cli/quant_pick.py` 的 `_parse_today` / `_resolve_output_path`(目录自动命名 + 格式映射)/ `_serialize_result`(JSON 兼容序列化)。
+
+### Fixed
+
+- **`web/components/quant_pick.py` 抽纯函数 + 缺列防崩**:`render_quant_picker` 拆出 `_prepare_display_df` / `_select_all_updates`(原全选联动逻辑内嵌不可测)。顺带修复隐藏 bug:历史数据缺 `avg_win_rate`/`avg_holding_days` 列时 `df.get(col, 0)` 返回标量导致 `.round()` 崩,现缺列填 0。
+- **`tradingagents/graph/trading_graph.py` yfinance 懒加载(P2 #4)**:验证发现 yfinance 并非死 import——`y_finance.py` 是 default_config 可选 vendor(Options: a_stock/alpha_vantage/yfinance),`stockstats_utils.py`/`yfinance_news.py` 也依赖,全删不安全。改为 `_fetch_returns` 内懒加载,graph 模块不再硬依赖;yfinance 不可用/失败时静默降级 Sina fallback,行为不变。
+- **`web/app_main.py` 综合推荐批量路径 save_recommendation 去重(P2 #5)**:tab_rec 遍历 trackers 落盘加 `rec_saved_{ticker}_{date}` 守卫(与单股路径一致),避免每次 rerun 重复写盘。
+- **`web/components/recommendation.py` 截断改完整显示(P3 #8)**:`final_decision[:1500]` / `final_ranked[:800]` 截断移除,外层 expander 默认收起,长报告完整可读。
+- **`web/components/sidebar.py` provider 回退(P3 #9)**:`_PROVIDERS` 从仅 DeepSeek 扩到 7 个(DeepSeek/OpenAI/Anthropic/Qwen/GLM/MiniMax/Ollama 本地),help 文案列全各供应商对应 API key 环境变量。
+
+### Tested
+
+- `pytest tests/ --ignore=tests/test_google_api_key.py` **243 passed + 44 subtests,0 failures**(较 v0.3.0 新增 53 用例)。
+- 懒加载改造后 `test_memory_log.py`(60 用例,覆盖 `_fetch_returns`)全绿;`yfinance.Ticker` 的 mock patch 依旧有效。
+
+## [0.3.0] — 2026-07-19
+
+本版是 TradingAgents-astock fork 的"量化整合大版本":在原 LLM 多 Agent 投研流水线**之前**插入 46 策略量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构。包名 `tradingagents-astock` -> `tradingagents-quant`,版本 0.2.18 -> 0.3.0。
+
+### Added - 量化层(类 A,23 文件)
+
+- **`tradingagents/quant/`**:从 stock_pick_live 迁入完整量化层。`pick()` API 跑 46 策略(multiprocessing.Pool + spawn)产出 Top N 候选 + 命中策略 + 加权分 + 入场建议。
+- **46 策略**(`strategy/strategy_library_final.py` 2267 行):S=11 / A=18 / B=14 / C=3,涵盖日线/周线/月线/季度多时间框架。`module` 字段全部改为 `tradingagents.quant.strategy.xxx`(46 处)。
+- **features/backtest/data/utils** 四个子模块: indicators/factors/pipeline、Signal 类、cache/universe/st_filter、trading_calendar,纯 pandas/numpy 实现。
+- **`sina_fetcher.py`**:零依赖全市场日线抓取(ThreadPoolExecutor 并发)。
+
+### Added - LangGraph 集成(类 B,24 文件)
+
+- **`agents/quant_picker_node.py`**:LangGraph 节点封装,把量化层 Top N 结果格式化为 `quant_pick_context` 字符串写入 state。batch 模式 no-op 优化。
+- **`agents/conflict_resolver.py`**:纯规则冲突解决节点(无 LLM),合并量化 Buy/Sell + LLM Buy/Hold/Sell 输出 4 档标签:🟢 强买 / 🟡 关注 / 🟠 冲突 / 🔴 弃。
+- **`graph/setup.py` 拓扑改造**:`START -> Quant Picker -> 7 Analyst -> Bull/Bear 辩论 -> Research Manager -> Trader -> 3 方风险辩论 -> Portfolio Manager -> Conflict Resolver -> END`。
+- **7 个 Analyst prompt 注入**:market/social/news/fundamentals/policy/hot_money/lockup 全部加 `{quant_pick_context}` partial,让 LLM 分析师看到量化层命中策略/tier/胜率/加权分。
+- **`agent_states.py` + `propagation.py`**:加 `quant_pick_context` + `final_ranked_decision` 字段并初始化。
+- **`default_config.py`**:加 7 个 quant_* 配置(quant_layer_enabled=True / quant_daily_cache_name="daily_main_board_liquid" / quant_top_n_default=20 / quant_n_workers=8 等)。
+
+### Added - Web UI 4-tab 重构(类 C,10 文件)
+
+- **`web/app.py` + `web/app_main.py` 拆分**:app.py 改为最小入口(只含 `if __name__ == "__main__":` guard),app_main.py 装所有 streamlit 代码。修复 Windows multiprocessing spawn worker 重复 import 导致的进程增殖崩溃。
+- **4 tab 布局**:📊 量化选股 / 🤖 AI 深度分析 / 🎯 综合推荐 / 📜 历史。
+- **`components/quant_pick.py`**:Top N 候选表 + 全选 checkbox + 中文名展示 + 命中策略详情折叠。
+- **`components/recommendation.py`**:综合推荐 tab,按 🟢强买 / 🟡关注 / 🟠冲突 / 🔴弃 四类展示。
+- **`components/progress_panel.py`**:加 `render_quant_progress` 函数,量化层 46 策略并行进度条。
+- **`progress.py`**:加 `QuantProgressTracker` 子类(独立阶段常量,不动 `PIPELINE_STAGES` 编号)。
+- **`runner.py`**:加 `run_quant_pick_in_thread`,后台线程跑 `pick()` 流式消费。
+- **`history.py`**:加 `get_quant_history` / `save_quant_pick` / `save_recommendation`。
+- **`pdf_export.py`**:`_collect_sections` 头部插量化上下文段。
+- **品牌改名**:TradingAgents-Astock -> **Aquant 投研工具**(Web UI 标题)。
+
+### Added - CLI + 自动化(类 D,3 文件)
+
+- **`cli/quant_pick.py`**(~260 行):Typer `quant-pick` 子命令,9 个选项,4 种输出格式(terminal/json/csv/markdown),默认 `--cache daily_main_board_liquid`。
+- **`scripts/daily_pipeline.py`**(~250 行):每日 cron 入口,11 个选项,默认只跑量化层,`--with-llm` 启用 LLM 深度分析(对 Top N 逐只调 `TradingAgentsGraph.propagate()`),落盘 `outputs/daily/<YYYY-MM-DD>/`。
+
+### Added - 配置依赖(类 E,2 文件)
+
+- **`pyproject.toml`**:包名改 `tradingagents-quant`,版本 0.3.0;dependencies 加 `numpy>=1.24` / `pyarrow>=14.0`;新增 `[project.optional-dependencies] quant = [...]`。
+- **`requirements-quant.txt`**:新建,量化层独立依赖(pandas/numpy/pyarrow/requests/pytz)。
+
+### Changed - 默认 LLM 改 DeepSeek
+
+- `default_config.py` `llm_provider` `openai -> deepseek`,`deep_think_llm` `gpt-5.4 -> deepseek-v4-pro`,`quick_think_llm` `gpt-5.4-mini -> deepseek-v4-flash`。
+- `web/components/sidebar.py` `_PROVIDERS` 缩减到 DeepSeek 一项(快速=Flash,深度=Pro)。
+- `tradingagents/llm_clients/model_catalog.py` DeepSeek deep 模型列表重排,Pro 优先。
+
+### Performance - 量化层 30 -> 12 分钟
+
+- `daily_main_board`(3042 股)-> `daily_main_board_liquid`(2129 股,流动性前 70%),6 处文件统一改:`default_config.py` / `quant_picker.py` / `cli/quant_pick.py` / `scripts/daily_pipeline.py` / `agents/quant_picker_node.py`。
+- 实测对比(workers=8,--today 2026-07-14):v1 全量 cache 4 workers 1836.8s(30.6 min)-> v2 liquid cache 8 workers 733.6s(12.2 min),**加速 2.50x**。
+- 慢策略 258s -> 142-159s(-40%),快策略 14-20s -> 11-15s。
+
+### Fixed
+
+- **multiprocessing spawn 崩溃循环**:原 `web/app.py` 所有 streamlit 代码在模块顶层,Windows spawn worker 重复 import 时重执行 streamlit,导致进程数无限增殖。拆为 `app.py`(最小入口)+ `app_main.py`(main 函数)。
+- **量化层"无候选股票"**:`pick()` 加日期 fallback,当 `today` 超过 cache 最新日期时自动回退到 cache 最新日期,避免 46 策略 `_eligible_by_date.get(current_date)` 返回 None 导致零信号。
+- **选股历史点不显示**:Tab 1/4 点历史按钮加载 `quant_picks` 后未渲染。加新分支 `elif quant_picks and len(top_picks)>0:` 调 `render_quant_picker`,且历史按钮同时清 `quant_tracker` 避免 branch 2 优先匹配。
+- **FINAL_STATS 46 vs 42 不一致**:旧文档标 42 策略,实际 46(S=11/A=18/B=14/C=3),全文档统一。
+- **trading_graph 不消费 final_ranked_decision**:Conflict Resolver 输出未被下游读取,修。
+- **conflict_resolver rating 解析失效**:rating 标签正则匹配错误,修。
+- **daily_pipeline batch 优化失效**:批量模式没复用 Pool,修。
+- **create_initial_state 缺 final_trade_decision**:加初始化,避免 PM 节点读 None。
+- **trading_graph fallback cache name 不一致**:fallback 路径仍用旧 cache 名,统一改 liquid。
+- **checkpoint resume pre_quant_context 丢失**:resume 时 quant_pick_context 字段未保留,修。
+- **daily_pipeline main 永远 return 0**:错误码被吞,改返回实际退出码。
+
+### Tested
+
+- 量化层端到端冒烟测试:`QUANT_CACHE_DIR=stock_pick_live/outputs/cache py -m cli.main quant-pick --today 2026-07-14 --top-n 10 --workers 8 --output-format json`,46 策略全跑通,0 错误,12.2 min,Top 1: 600428(加权分 24.81,6 个策略命中)。
+- Web UI 4 tab 布局:Streamlit 1.50 实测,4 tab 切换正常,选股/分析/推荐/历史四态工作流跑通。
+- 真 LLM 端到端测试:待 DeepSeek API quota 恢复后跑 `tradingagents analyze` 验证 Quant Picker + Conflict Resolver 节点真生效(待 task #8)。
+- 单元测试:`pytest tests/ --ignore=tests/test_google_api_key.py` 135 passed + 44 subtests,0 failures。
+
+### Refined - 2026-07-20 上线前审校
+
+**策略库精简(用户决策)**:46 个策略 -> 10 个有效(S=2/A=3/B=2/C=3),36 个弃用策略**彻底清除**(不再保留定义)。`strategy_library_final.py` 从 2267 行精简到 477 行,删除 36 个弃用策略 .py 文件,只保留 10 个 active 策略文件 + 4 个核心文件(`__init__.py` / `base.py` / `market_filter.py` / `strategy_library_final.py`)。
+
+**Batch flow 三 bug 修复**(4 股并行 AI 分析 + 综合推荐 pipeline):
+- **quant_pick 重复**:`web/app_main.py` `_build_quant_contexts_for_batch` 一次性构建所有 ticker 的量化上下文(优先复用 `save_quant_pick` JSON,否则同步调 `prepare_quant_contexts`),通过 `run_analysis_in_thread(pre_quant_context=...)` 注入,使 Quant Picker LangGraph 节点 no-op。修复前 N 只股票 = N×3 min,修复后 = 1×3 min。
+- **tab_rec 丢标的**:`tab_rec` 原只读 `st.session_state["tracker"]`(单 active ticker),N-1 只被静默丢弃。改为遍历 `st.session_state["trackers"]` 字典,对每个 is_complete tracker 自动 `save_recommendation`。
+- **memory_log 写竞争**:N 线程并发 `store_decision()` / `update_with_outcome()` 损坏 markdown(条目文本互相渗透)。`tradingagents/agents/utils/memory.py` 加模块级 `threading.Lock`,覆盖 append + read-modify-write。
+
+**包元数据清理**:
+- 删除死依赖 `redis>=6.2.0` 和 `backtrader>=1.9.78.123`(代码无任何 import,违反 CLAUDE.md "零外部服务依赖" 原则)。
+- `tradingagents/__init__.py` 补 `__version__ = "0.3.0"`,与 `pyproject.toml` 一致。
+- `pyproject.toml` `[project.urls]` 加 Changelog URL。
+- `tests/test_google_api_key.py` 加 `pytest.importorskip("langchain_google_genai")`,未装 `[google]` extra 时跳过而非崩溃。
+
+**文档归档与品牌一致**:
+- `INTEGRATION_PLAN.md` -> `docs/INTEGRATION_PLAN_v0.3.0.md`(320 行规划文档,完成使命后归档)。
+- `CLAUDE.md` 版本号 `0.2.18 -> 0.3.0`,标题 `TradingAgents-Astock -> TradingAgents-quant`。
+- `NOTICE` 品牌名 `TradingAgents-Astock -> TradingAgents-quant`,补 v0.3.0 改造清单。
+- `web/components/report_viewer.py` 导出文件名前缀 `TradingAgents-Astock_ -> Aquant_`。
+- `README.md` 删除引用已删除图片的两处 `<img>` 标签(web-ui-welcome.png / wechat-sponsor.jpg)。
+- 全文档统一策略数表述:README/strategy_library_final.py docstring/FINAL_STATS 三处对齐为 "10 个有效 (S=2 A=3 B=2 C=3)"。
+
+**冗余清理**:
+- 删除一次性脚本:`scripts/_fix_strategy_imports.py`、`scripts/_inject_quant_context_to_analysts.py`、`scripts/debug_single_strategy.py`(均含硬编码 Windows 绝对路径,完成使命)。
+- 归档调试脚本到 `scripts/archive/`:`test_pick_v3_12strats.py`、`test_ai_analysis_live.py`、`test_back_half_llm.py`、`test_batch_flow.py`(保留作历史回归参考)。
+- 删除根目录 `test.py`、`test_astock.py`、`test_data_quality.py`(用途已被 `tests/` 覆盖)。
+- 清空 `outputs/` 和 `tradingagents/quant/outputs/` 内容(测试产物)。
+- `.gitignore` 加 `outputs/`、`tradingagents/quant/outputs/`、`*.parquet`、`stock_pick_live/` 条目。
+
+### Breaking Changes
+
+- 包名 `tradingagents-astock` -> `tradingagents-quant`。`pip install -e .` 后 import 路径不变(`tradingagents.*` 子模块未改名)。
+- 默认 LLM 从 OpenAI 改 DeepSeek。原 OpenAI 用户需在 `.env` 设 `OPENAI_API_KEY` 并在 Web UI 侧栏手动切换 provider(注:Web UI 当前仅展示 DeepSeek,其他 provider 需手动改 sidebar.py `_PROVIDERS`)。
+- `default_config.py` 默认 `quant_layer_enabled=True`,即 `TradingAgentsGraph.propagate()` 默认会跑量化层。若想跳过,设 `config["quant_layer_enabled"]=False`。
+- **2026-07-20**:弃用策略彻底清除。原 46 个策略中 36 个被弃用(前视偏差修复后严重退化),已从 `strategy_library_final.py` 和 `strategy/` 目录物理删除,不保留定义。如需恢复,从 `stock_pick_live` 上游项目重新迁入。
+- **2026-07-21 P1 修复**:
+  - `tradingagents/agents/conflict_resolver.py` 节点函数加 `try/except` 防御,极端输入(state 为 None/list/int/string/带异常的 .get)降级为 🔴 弃 + 错误信息,不再崩溃 LangGraph 流水线。
+  - `tradingagents/default_config.py` `quant_top_n_default` 20 -> 10(平衡覆盖与 API 成本,20 易耗尽 DeepSeek quota)。
+  - `web/components/sidebar.py` Top N selectbox 默认选项调为 "10",help 文案更新。
+- **2026-07-21 风控辩论中文输出修复**:5 个辩论 agent(Bull/Bear researcher + Aggressive/Conservative/Neutral debator)原本 prompt 全英文且未调 `get_language_instruction()`,导致 Web UI 风控评估 3 个标签页内容为英文,仅 PM 最终总结是中文。修复:① 顶部加 `from tradingagents.agents.utils.agent_utils import get_language_instruction`;② prompt 末尾追加 `{get_language_instruction()}`(英文骨架保留以保推理质量,仅强制输出语言);③ argument 前缀中文化(`Bull Analyst:` -> `多方分析师:` / `Aggressive Analyst:` -> `激进分析师:` 等)。同步更新 `agent_utils.py:38` docstring 反映新策略。`pytest tests/` 135 passed。
+- **2026-07-21 综合推荐显示股票名称**:Tab 3 综合推荐 4 列分类下 expander 标题原显示 6 位代码(如 `300750`),用户难以辨认。`tradingagents/dataflows/a_stock.py` 新增 `get_stock_name(ticker)` 公共函数(基于 `_code_to_name` 反查,失败返回 None 而非抛错);`web/components/recommendation.py` expander 标题改为 `名称（代码）` 格式,反查失败时回退到原代码格式。
+- **2026-07-21 修复 NotFoundError DOM 异常**:`web/history.py` `_save_incomplete_index` 用 `tmp.replace(target)` 原子写,Windows 上偶发被杀软/索引器持锁导致 `PermissionError [WinError 5]`。该函数经 `get_incomplete_history` 在 sidebar 每次 rerun 调用,崩溃后 Streamlit script_runner 中断渲染,浏览器 React DOM 残留半构建节点,触发 `NotFoundError: removeChild`。修复:① `_save_incomplete_index` 加 4 次重试(50/100/150/200ms 退避)+ 最终失败回退到直接 `open()+json.dump` + 仍失败则静默 `logger.warning`;② `get_incomplete_history` 调用处再加一层 try/except 兜底,sidebar 渲染永不崩。`pytest tests/` 135 passed。
+- **2026-07-21 修复 Bull/Bear 辩论路由崩溃(回归自 2026-07-21 风控辩论中文输出修复)**:把 `bull_researcher.py` 的 `argument` 前缀从 `"Bull Analyst: "` 改为 `"多方分析师: "`后,`conditional_logic.py:77` 的 `should_continue_debate` 路由器 `current_response.startswith("Bull")` 永远为 False,fall through 到 `return "Bull Researcher"`,但 Bull Researcher 的 conditional edges 只允许 `{Bear Researcher, Research Manager}`,LangGraph 抛 `KeyError: 'Bull Researcher'` 中断分析。修复:`should_continue_debate` 同时识别英文 `Bull` 和中文 `多方` 前缀,兼容新旧 history(checkpoint resume 场景)。风控辩论路由不受影响(用 `latest_speaker` 字段,仍是英文 `Aggressive`/`Conservative`/`Neutral`)。`pytest tests/` 135 passed。
+- **2026-07-21 Conflict Resolver 3 状态逻辑(手动选股不再被降级)**:原 `_detect_quant_hit` 只区分 hit/miss 两态,手动输入的 ticker 因 `quant_picker_node` 跳过注入(无负面锚)导致 `quant_pick_context` 为空,被 Conflict Resolver 当成"未命中"降级 LLM Buy->🟡关注 / Hold->🔴弃。重构为 3 态:① `hit`(命中策略)② `miss`(跑了量化但未命中,降级合理)③ `skipped`(手动选股,量化层未参与,不降级)。`_detect_quant_state` + `_assign_label` 重写,`skipped + Buy -> 🟢强买` / `skipped + Hold -> 🟡关注` / `skipped + Sell -> 🔴弃`。`pytest tests/` 135 passed。
+- **2026-07-21 修复深度分析 vs 综合推荐信号不一致**:深度分析 tab 的 "TRADING SIGNAL" 大字显示 `tracker.signal`,原来源是 `parse_rating(final_ranked_decision)` 抓 LLM 5 档 rating(Buy/Sell/Hold),而综合推荐 tab 显示 Conflict Resolver 的 4 档标签(🟢强买/🟡关注/🟠冲突/🔴弃),两者会 diverge(如 LLM Buy + quant miss 时深度分析显示绿色 BUY,推荐却显示黄色 🟡关注)。修复:① `agent_states.py` 加 `final_signal_label` 字段;② `conflict_resolver.py` 节点返回 `final_signal_label: label`(4 档中文标签);③ `trading_graph.py:finalize_graph_run` 优先用 `final_signal_label`,空时回退到 `parse_rating`(兼容旧数据);④ `report_viewer.py:_signal_style` + `pdf_export.py:_signal_color` 扩展识别 emoji 前缀(🟢/🟡/🟠/🔴)映射颜色,保留 5 档英文回退;⑤ `report_viewer.py:77` / `pdf_export.py:448,681` 去掉 `.upper()`(中文标签无需大写)。两个 tab 现在显示同一信号,颜色一致。`pytest tests/` 135 passed。
+
 ## [0.2.18] — 2026-07-10
 
 合并社区 PR #75（致谢 @wangyuxun6699），与 v0.2.17 的 #76 修复同属一类问题：LLM 工具调用把非股票标识当 `ticker` 传入。

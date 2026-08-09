@@ -1,5 +1,3 @@
-from typing import Annotated
-
 REPORT_FIELDS = {
     "market": "market_report",
     "social": "sentiment_report",

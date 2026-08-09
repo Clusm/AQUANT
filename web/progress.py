@@ -47,6 +47,10 @@ class ProgressTracker:
     final_state: dict[str, Any] = field(default_factory=dict)
     signal: str = ""
 
+    # Quant layer hint: when the quant layer is skipped for manual tickers,
+    # this field is set so the UI can display a hint to the user.
+    quant_skip_hint: str = ""
+
     llm_calls: int = 0
     tool_calls: int = 0
     tokens_in: int = 0
@@ -180,3 +184,123 @@ class ProgressTracker:
             if stage_id == self.current_stage:
                 return "active"
             return "pending"
+
+
+@dataclass
+class QuantProgressTracker(ProgressTracker):
+    """Progress tracker for the quant pre-filter layer (strategies batch run).
+
+    Independent of PIPELINE_STAGES - the quant layer runs *before* the LangGraph
+    pipeline and reports progress per strategy via pick()'s progress_callback,
+    not per LangGraph node. The parent's stage-related fields stay empty during
+    a quant run.
+
+    Lifecycle:
+      0. (optional) data_update phase: mark_data_update_active -> mark_data_update_progress* -> mark_data_update_done
+      1. is_running=True, total_strategies=N (set by run_quant_pick_in_thread from get_all_strategies_final())
+      2. mark_strategy_done(name, stats) called N times by progress_callback
+      3. mark_pick_complete(top_picks, elapsed) called once at the end
+      4. UI reads top_picks via render_quant_progress
+    """
+
+    total_strategies: int = 0
+    completed_strategies: int = 0
+    latest_strategy: str = ""
+    per_strategy_stats: dict[str, dict] = field(default_factory=dict)
+    top_picks: Any = None  # pd.DataFrame
+    all_records: list = field(default_factory=list)  # 每策略命中明细(供 UI 详情面板)
+    pick_elapsed: float = 0.0
+    n_strategies_error: int = 0
+
+    # 数据增量更新阶段
+    data_update_active: bool = False
+    data_update_cache_name: str = ""
+    data_update_last_date: Any = None  # pd.Timestamp
+    data_update_days_behind: int = 0
+    data_update_completed: int = 0
+    data_update_total: int = 0
+    data_update_failed: int = 0
+    data_update_latest_code: str = ""
+
+    def mark_data_update_active(self, cache_name: str, last_date: Any, days_behind: int) -> None:
+        """Enter the data increment phase before pick() starts."""
+        with self._lock:
+            if self.stop_requested:
+                return
+            self.data_update_active = True
+            self.data_update_cache_name = cache_name
+            self.data_update_last_date = last_date
+            self.data_update_days_behind = days_behind
+
+    def mark_data_update_progress(self, completed: int, total: int, stats: dict) -> None:
+        """Update progress during increment_data()."""
+        with self._lock:
+            if self.stop_requested:
+                return
+            self.data_update_completed = completed
+            self.data_update_total = total
+            self.data_update_failed = stats.get("failed", 0)
+            self.data_update_latest_code = stats.get("latest_code", "")
+
+    def mark_data_update_done(self) -> None:
+        """Exit the data increment phase."""
+        with self._lock:
+            self.data_update_active = False
+
+    def mark_strategy_done(self, name: str, stats: dict) -> None:
+        """Record one strategy's result. Thread-safe; no-op if stop_requested."""
+        with self._lock:
+            if self.stop_requested:
+                return
+            self.latest_strategy = name
+            self.per_strategy_stats[name] = {
+                "tier": stats.get("tier", "?"),
+                "comp": stats.get("comp", 0.0),
+                "n_hits": stats.get("n_hits", 0),
+                "elapsed": stats.get("elapsed", 0.0),
+                "error": stats.get("error"),
+                "needs_full": stats.get("needs_full", False),
+            }
+            self.completed_strategies = len(self.per_strategy_stats)
+            if stats.get("error"):
+                self.n_strategies_error = self.n_strategies_error + 1
+
+    def mark_pick_complete(self, top_picks: Any, elapsed: float,
+                           n_run: int = 0, n_error: int = 0,
+                           all_records: list | None = None) -> None:
+        """Finalize the pick() run. Thread-safe."""
+        with self._lock:
+            self.top_picks = top_picks
+            self.pick_elapsed = elapsed
+            if n_run:
+                self.total_strategies = n_run
+            if n_error:
+                self.n_strategies_error = n_error
+            if all_records is not None:
+                self.all_records = all_records
+            self.is_running = False
+            self.is_complete = True
+            self.is_paused = False
+            self.stop_requested = False
+            self._pause_gate.set()
+
+    def request_stop(self) -> bool:
+        """Override to also clear quant-specific fields."""
+        with self._lock:
+            if not self.is_running or self.is_complete or self.error or self.stop_requested:
+                return False
+            self.stop_requested = True
+            self.is_paused = False
+            self.latest_strategy = ""
+            self.per_strategy_stats.clear()
+            self.top_picks = None
+            self.pick_elapsed = 0.0
+            self._pause_gate.set()
+            return True
+
+    @property
+    def strategy_progress_pct(self) -> float:
+        """0.0 - 1.0, completed / total."""
+        if self.total_strategies <= 0:
+            return 0.0
+        return min(1.0, self.completed_strategies / self.total_strategies)

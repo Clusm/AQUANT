@@ -13,6 +13,7 @@ from __future__ import annotations
 from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
+    build_quant_context,
     get_language_instruction,
 )
 from tradingagents.agents.utils.structured import (
@@ -26,6 +27,7 @@ def create_portfolio_manager(llm):
 
     def portfolio_manager_node(state) -> dict:
         instrument_context = build_instrument_context(state["company_of_interest"])
+        quant_context = build_quant_context(state)
 
         history = state["risk_debate_state"]["history"]
         risk_debate_state = state["risk_debate_state"]
@@ -36,6 +38,16 @@ def create_portfolio_manager(llm):
         lessons_line = (
             f"- Lessons from prior decisions and outcomes:\n{past_context}\n"
             if past_context
+            else ""
+        )
+        try:
+            from tradingagents.quant.strategy.strategy_library_final import get_all_strategies_final
+            _n_strats = len(get_all_strategies_final())
+        except Exception:
+            _n_strats = 0
+        quant_line = (
+            f"- Quant pre-filter context ({_n_strats} strategies systematic signal):\n{quant_context}\n"
+            if quant_context
             else ""
         )
 
@@ -65,13 +77,18 @@ def create_portfolio_manager(llm):
 **Context:**
 - Research Manager's investment plan: **{research_plan}**
 - Trader's transaction proposal: **{trader_plan}**
-{lessons_line}
+{lessons_line}{quant_line}
 **Risk Analysts Debate History:**
 {history}
 
 ---
 
-Be decisive and ground every conclusion in specific evidence from the analysts.{get_language_instruction()}"""
+Be decisive and ground every conclusion in specific evidence from the analysts.
+If quant pre-filter context is provided, weigh it alongside the LLM analyst reports:
+- Quant signal is systematic (42 backtested strategies); strong quant hit + LLM agreement = high conviction Buy
+- Quant hit + LLM disagreement = reduce position size or flag as conflict
+- No quant hit + LLM Buy = lower conviction, smaller position
+{get_language_instruction()}"""
 
         final_trade_decision = invoke_structured_or_freetext(
             structured_llm,

@@ -1,4 +1,3 @@
-from typing import Optional
 import datetime
 import typer
 from pathlib import Path
@@ -12,21 +11,18 @@ load_dotenv(".env.enterprise", override=False)
 from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.live import Live
-from rich.columns import Columns
 from rich.markdown import Markdown
 from rich.layout import Layout
 from rich.text import Text
 from rich.table import Table
 from collections import deque
 import time
-from rich.tree import Tree
 from rich import box
 from rich.align import Align
 from rich.rule import Rule
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
-from cli.models import AnalystType
 from cli.utils import *
 from cli.announcements import fetch_announcements, display_announcements
 from cli.stats_handler import StatsCallbackHandler
@@ -253,7 +249,7 @@ def format_tokens(n):
     return str(n)
 
 
-def update_display(layout, spinner_text=None, stats_handler=None, start_time=None):
+def update_display(layout, stats_handler=None, start_time=None):
     # Header with welcome message
     layout["header"].update(
         Panel(
@@ -912,7 +908,7 @@ def classify_message_type(message) -> tuple[str, str | None]:
     """Classify LangChain message into display type and extract content.
 
     Returns:
-        (type, content) - type is one of: User, Agent, Data, Control
+        (type, content) - type is one of: User, Agent, Data, Control, System
                         - content is extracted string or None
     """
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -1052,16 +1048,18 @@ def run_analysis(checkpoint: bool = False):
         message_buffer.update_agent_status(first_analyst, "in_progress")
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
-        # Create spinner text
-        spinner_text = (
-            f"Analyzing {selections['ticker']} on {selections['analysis_date']}..."
-        )
-        update_display(layout, spinner_text, stats_handler=stats_handler, start_time=start_time)
+        update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
         # Initialize state and get graph args with callbacks
         init_agent_state = graph.propagator.create_initial_state(
             selections["ticker"], selections["analysis_date"]
         )
+        # 与 web/runner.py 一致:显式走量化前置层。quant_picker_node 对
+        # ticker_source 未设置时默认 "manual",会静默跳过 pick()(仅当当日
+        # 存在 saved JSON 才注入 context),导致 CLI 单标的分析丢失量化层。
+        # 传 "quant_picker" 让无 saved JSON 时也运行 pick(),失败时节点
+        # 会写入 [量化层错误] context,conflict resolver 按 error 态处理。
+        init_agent_state["ticker_source"] = "quant_picker"
         # Pass callbacks to graph config for tool execution tracking
         # (LLM tracking is handled separately via LLM constructor)
         args = graph.propagator.get_graph_args(callbacks=[stats_handler])
@@ -1244,6 +1242,12 @@ def analyze(
         n = clear_all_checkpoints(DEFAULT_CONFIG["data_cache_dir"])
         console.print(f"[yellow]Cleared {n} checkpoint(s).[/yellow]")
     run_analysis(checkpoint=checkpoint)
+
+
+# 注册 quant-pick 子命令(从 cli.quant_pick 导入,避免顶部 import 循环风险)
+from cli.quant_pick import register_quant_pick  # noqa: E402
+
+register_quant_pick(app)
 
 
 if __name__ == "__main__":

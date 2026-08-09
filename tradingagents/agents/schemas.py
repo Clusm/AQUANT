@@ -226,3 +226,60 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     if decision.time_horizon:
         parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Conflict Resolver (quant + LLM decision merge)
+# ---------------------------------------------------------------------------
+
+
+class ConflictResolvedDecision(BaseModel):
+    """Structured output produced by the Conflict Resolver node.
+
+    Merges the quant pre-filter signal (systematic, active strategy library)
+    with the LLM Portfolio Manager decision (deep reasoning). The label is
+    the user-facing action tag; the rationale explains how the two signals
+    were reconciled.
+
+    Note: In the current simplified implementation (no Compare LLM), the
+    Conflict Resolver uses rule-based logic rather than an LLM call. This
+    schema is kept for future LLM-based resolution and for structured
+    serialization in saved reports.
+    """
+
+    label: str = Field(
+        description=(
+            "Conflict resolution label. Exactly one of: "
+            "'🟢 强买' (quant Buy + LLM Buy), "
+            "'🟡 关注' (mixed signals, worth watching), "
+            "'🟠 冲突' (quant Buy + LLM Sell, user judgment needed), "
+            "'🔴 弃' (quant no signal + LLM Sell, or weak conviction)."
+        ),
+    )
+    recommendation: str = Field(
+        description="Final action recommendation in plain language, e.g. 'Buy', 'Watch', 'Skip'.",
+    )
+    quant_signal: str = Field(
+        description="Summary of quant pre-filter signal: hit strategies count, weighted score, win rate.",
+    )
+    llm_signal: str = Field(
+        description="Summary of LLM Portfolio Manager decision: rating and key reasoning.",
+    )
+    rationale: str = Field(
+        description="Why this label was chosen. Explain how quant and LLM signals were reconciled.",
+    )
+
+
+def render_conflict_resolution(decision: ConflictResolvedDecision) -> str:
+    """Render ConflictResolvedDecision to markdown for storage and display."""
+    return "\n".join([
+        f"**Label**: {decision.label}",
+        "",
+        f"**Recommendation**: {decision.recommendation}",
+        "",
+        f"**Quant Signal**: {decision.quant_signal}",
+        "",
+        f"**LLM Signal**: {decision.llm_signal}",
+        "",
+        f"**Rationale**: {decision.rationale}",
+    ])

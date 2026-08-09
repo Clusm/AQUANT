@@ -1,6 +1,8 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
+    build_quant_context,
+    extract_report_content,
     get_concept_blocks,
     get_dragon_tiger_board,
     get_fund_flow,
@@ -12,7 +14,6 @@ from tradingagents.agents.utils.agent_utils import (
     get_northbound_flow,
     get_stock_data,
 )
-from tradingagents.dataflows.config import get_config
 
 
 def create_hot_money_tracker(llm):
@@ -81,7 +82,7 @@ def create_hot_money_tracker(llm):
                     " If you or any other assistant has the FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** or deliverable,"
                     " prefix your response with FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** so the team knows to stop."
                     " You have access to the following tools: {tool_names}.\n{system_message}"
-                    "For your reference, the current date is {current_date}. {instrument_context}",
+                    "For your reference, the current date is {current_date}. {instrument_context}.{quant_context}",
                 ),
                 MessagesPlaceholder(variable_name="messages"),
             ]
@@ -91,14 +92,12 @@ def create_hot_money_tracker(llm):
         prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
+        prompt = prompt.partial(quant_context=build_quant_context(state))
 
         chain = prompt | llm.bind_tools(tools)
         result = chain.invoke(state["messages"])
 
-        report = ""
-
-        if len(result.tool_calls) == 0:
-            report = result.content
+        report = extract_report_content(result)
 
         return {
             "messages": [result],

@@ -7,6 +7,36 @@ from functools import lru_cache
 from typing import Any
 
 
+def strip_think_tags(text: str) -> str:
+    """Remove  thinking... response blocks from LLM output."""
+    return re.sub(r" thinking.*? response\s*", "", text, flags=re.DOTALL).strip()
+
+
+def signal_style(signal: str) -> tuple[str, str]:
+    """Map signal text to (hex_color, chinese_label).
+
+    Primary path: signal is the 4-tier merged label from Conflict Resolver
+    ("🟢 强买" / "🟡 关注" / "🟠 冲突" / "🔴 弃"). Detect by emoji prefix.
+
+    Legacy fallback: signal is the 5-tier LLM rating ("Buy"/"Sell"/etc.),
+    kept for old saved data before the 4-tier label was introduced.
+    """
+    if "🟢" in signal or "强买" in signal:
+        return "#22c55e", "强买"
+    if "🟡" in signal or "关注" in signal:
+        return "#eab308", "关注"
+    if "🟠" in signal or "冲突" in signal:
+        return "#f97316", "冲突"
+    if "🔴" in signal or signal.endswith("弃"):
+        return "#ef4444", "弃"
+    s = signal.upper()
+    if "BUY" in s:
+        return "#22c55e", "买入"
+    if "SELL" in s:
+        return "#ef4444", "卖出"
+    return "#fbbf24", "持有"
+
+
 def _clean_stock_name(name: str) -> str:
     return "".join(ch for ch in str(name) if ch.isprintable()).strip()
 

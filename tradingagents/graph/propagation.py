@@ -55,6 +55,12 @@ class Propagator:
             "policy_report": "",
             "hot_money_report": "",
             "lockup_report": "",
+            "quant_pick_context": "",
+            "final_ranked_decision": "",
+            "final_signal_label": "",
+            "final_trade_decision": "",
+            "trader_investment_plan": "",
+            "investment_plan": "",
         }
 
     def get_graph_args(self, callbacks: Optional[List] = None) -> Dict[str, Any]:

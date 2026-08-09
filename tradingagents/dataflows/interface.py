@@ -1,5 +1,3 @@
-from typing import Annotated
-
 # Import from vendor-specific modules
 from .y_finance import (
     get_YFin_data_online,
@@ -24,7 +22,6 @@ from .alpha_vantage import (
 )
 from .alpha_vantage_common import AlphaVantageRateLimitError
 from .a_stock import (
-    resolve_ticker,
     get_stock_data as get_astock_stock_data,
     get_indicators as get_astock_indicators,
     get_fundamentals as get_astock_fundamentals,
@@ -220,10 +217,9 @@ def route_to_vendor(method: str, *args, **kwargs):
             continue
 
         vendor_impl = VENDOR_METHODS[method][vendor]
-        impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
 
         try:
-            return impl_func(*args, **kwargs)
+            return vendor_impl(*args, **kwargs)
         except AlphaVantageRateLimitError:
             continue  # Only rate limits trigger fallback
 

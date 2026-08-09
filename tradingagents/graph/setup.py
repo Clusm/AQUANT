@@ -19,12 +19,14 @@ class GraphSetup:
         deep_thinking_llm: Any,
         tool_nodes: Dict[str, ToolNode],
         conditional_logic: ConditionalLogic,
+        config: Dict[str, Any] = None,
     ):
         """Initialize with required components."""
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
         self.tool_nodes = tool_nodes
         self.conditional_logic = conditional_logic
+        self.config = config  # Optional; Quant Picker reads quant_layer_enabled from here or DEFAULT_CONFIG
 
     def setup_graph(
         self, selected_analysts=["market", "social", "news", "fundamentals", "policy", "hot_money", "lockup"]
@@ -113,8 +115,15 @@ class GraphSetup:
         conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
         portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
 
+        # Create quant layer nodes (P2 integration)
+        quant_picker_node = create_quant_picker_node(self.config)
+        conflict_resolver_node = create_conflict_resolver()
+
         # Create workflow
         workflow = StateGraph(AgentState)
+
+        # Add quant picker node (runs first, before analysts)
+        workflow.add_node("Quant Picker", quant_picker_node)
 
         # Add analyst nodes to the graph
         for analyst_type, node in analyst_nodes.items():
@@ -134,11 +143,14 @@ class GraphSetup:
         workflow.add_node("Neutral Analyst", neutral_analyst)
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
+        # Add conflict resolver node (runs after Portfolio Manager, before END)
+        workflow.add_node("Conflict Resolver", conflict_resolver_node)
 
         # Define edges
-        # Start with the first analyst
+        # Start with Quant Picker, then first analyst
         first_analyst = selected_analysts[0]
-        workflow.add_edge(START, f"{first_analyst.capitalize()} Analyst")
+        workflow.add_edge(START, "Quant Picker")
+        workflow.add_edge("Quant Picker", f"{first_analyst.capitalize()} Analyst")
 
         # Connect analysts in sequence
         for i, analyst_type in enumerate(selected_analysts):
@@ -207,6 +219,7 @@ class GraphSetup:
             },
         )
 
-        workflow.add_edge("Portfolio Manager", END)
+        workflow.add_edge("Portfolio Manager", "Conflict Resolver")
+        workflow.add_edge("Conflict Resolver", END)
 
         return workflow

@@ -77,3 +77,13 @@ class AgentState(MessagesState):
     ]
     final_trade_decision: Annotated[str, "Final decision made by the Risk Analysts"]
     past_context: Annotated[str, "Memory log context injected at run start (same-ticker decisions + cross-ticker lessons)"]
+
+    # Quant picker context (injected before analysts run)
+    quant_pick_context: Annotated[str, "Quant strategy pre-filter results: Top N candidates with hit strategies, weighted scores, win rates, entry advice"]
+    # Final ranked decision (Conflict Resolver output: merges quant score + LLM decision)
+    final_ranked_decision: Annotated[str, "Conflict-resolved final decision with 🟢/🟡/🟠/🔴 label, merges quant score and LLM decision"]
+    # 4-tier signal label extracted from final_ranked_decision for downstream
+    # display (deep analysis tab, recommendation tab, PDF). Values: "🟢 强买" /
+    # "🟡 关注" / "🟠 冲突" / "🔴 弃". Empty when Conflict Resolver hasn't run;
+    # consumers fall back to parse_rating(final_trade_decision) for legacy.
+    final_signal_label: Annotated[str, "4-tier merged signal label from Conflict Resolver"]

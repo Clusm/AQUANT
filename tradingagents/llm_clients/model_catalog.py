@@ -71,6 +71,7 @@ MODEL_OPTIONS: ProviderModeOptions = {
         ],
         "deep": [
             ("DeepSeek V4 Pro - Latest V4 flagship model", "deepseek-v4-pro"),
+            ("DeepSeek V4 Flash - 全用 Flash 方案(省钱)", "deepseek-v4-flash"),
             ("DeepSeek V3.2 (thinking)", "deepseek-reasoner"),
             ("DeepSeek V3.2", "deepseek-chat"),
             ("Custom model ID", "custom"),

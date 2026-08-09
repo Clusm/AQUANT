@@ -8,20 +8,12 @@ from typing import Any
 import streamlit as st
 
 from web.pdf_export import generate_markdown, generate_pdf
-from web.stock_display import normalize_stock_mentions, stock_display_label
-
-
-def _strip_think(text: str) -> str:
-    return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
-
-
-def _signal_style(signal: str) -> tuple[str, str]:
-    s = signal.upper()
-    if "BUY" in s:
-        return "#22c55e", "买入"
-    if "SELL" in s:
-        return "#ef4444", "卖出"
-    return "#fbbf24", "持有"
+from web.stock_display import (
+    normalize_stock_mentions,
+    signal_style,
+    stock_display_label,
+    strip_think_tags,
+)
 
 
 _ANALYST_SECTIONS = [
@@ -41,7 +33,7 @@ def _safe_filename_label(label: str) -> str:
 
 
 def _display_report_text(text: Any, ticker: str, final_state: dict[str, Any]) -> str:
-    cleaned = _strip_think(str(text))
+    cleaned = strip_think_tags(str(text))
     return normalize_stock_mentions(cleaned, ticker, final_state)
 
 
@@ -54,7 +46,7 @@ def render_report(
 ) -> None:
     """Render the full analysis report."""
 
-    color, cn_signal = _signal_style(signal)
+    color, cn_signal = signal_style(signal)
     ticker_label = stock_display_label(ticker, final_state)
 
     stats_html = ""
@@ -74,7 +66,7 @@ def render_report(
         ">
             <div style="font-size:0.9rem; color:#888; letter-spacing:2px;">TRADING SIGNAL</div>
             <div style="font-size:3.5rem; font-weight:900; color:{color}; margin:0.3rem 0;">
-                {signal.upper()}
+                {signal}
             </div>
             <div style="font-size:1.2rem; color:#f5f1eb;">
                 {ticker_label} · {trade_date}
@@ -95,7 +87,7 @@ def render_report(
         st.download_button(
             "📥 下载 Markdown",
             data=md_text.encode("utf-8"),
-            file_name=f"TradingAgents-Astock_{_safe_filename_label(ticker_label)}_{trade_date}.md",
+            file_name=f"Aquant_{_safe_filename_label(ticker_label)}_{trade_date}.md",
             mime="text/markdown",
             use_container_width=True,
         )
@@ -105,7 +97,7 @@ def render_report(
             st.download_button(
                 "📄 下载 PDF",
                 data=pdf_bytes,
-                file_name=f"TradingAgents-Astock_{_safe_filename_label(ticker_label)}_{trade_date}.pdf",
+                file_name=f"Aquant_{_safe_filename_label(ticker_label)}_{trade_date}.pdf",
                 mime="application/pdf",
                 use_container_width=True,
             )
@@ -118,6 +110,11 @@ def render_report(
             )
 
     st.markdown("---")
+
+    quant_ctx = final_state.get("quant_pick_context", "")
+    if quant_ctx:
+        with st.expander("🎯 量化选股上下文", expanded=False):
+            st.markdown(quant_ctx)
 
     inv_plan = final_state.get("investment_plan", "")
     if inv_plan:

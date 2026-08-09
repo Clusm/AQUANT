@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tradingagents-astock"
-version = "0.2.18"
-description = "A股多Agent投研框架 — 基于 TradingAgents 深度特化"
+name = "tradingagents-quant"
+version = "0.3.0"
+description = "A股多Agent投研框架 — 量化前置筛选 + LLM 深度分析双层架构"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
@@ -14,39 +14,38 @@ authors = [
 ]
 dependencies = [
     "langchain-core>=0.3.81",
-    "backtrader>=1.9.78.123",
     "langchain-anthropic>=0.3.15",
-    "langchain-experimental>=0.3.4",
     "langchain-openai>=0.3.23",
     "langgraph>=0.4.8",
     "langgraph-checkpoint-sqlite>=2.0.0",
     "pandas>=2.3.0",
-    "parsel>=1.10.0",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
     "pytz>=2025.2",
     "questionary>=2.1.0",
-    "redis>=6.2.0",
     "requests>=2.32.4",
     "rich>=14.0.0",
     "typer>=0.21.0",
     "setuptools>=80.9.0",
     "stockstats>=0.6.5",
-    "tqdm>=4.67.1",
     "typing-extensions>=4.14.0",
     "yfinance>=0.2.63",
-    "streamlit>=1.45.0",
+    "streamlit>=1.45.0,<1.58",
     "fpdf2>=2.8.6",
     "python-dotenv>=1.1.0",
     "mootdx>=0.10.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/simonlin1212/tradingagents-astock"
-Repository = "https://github.com/simonlin1212/tradingagents-astock"
-Issues = "https://github.com/simonlin1212/tradingagents-astock/issues"
+Homepage = "https://github.com/simonlin1212/TradingAgents-astock"
+Repository = "https://github.com/simonlin1212/TradingAgents-astock"
+Issues = "https://github.com/simonlin1212/TradingAgents-astock/issues"
 Upstream = "https://github.com/TauricResearch/TradingAgents"
+Changelog = "https://github.com/simonlin1212/TradingAgents-astock/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 google = ["langchain-google-genai>=4.0.0"]
+test = ["pytest>=7.4"]
 
 [project.scripts]
 tradingagents = "cli.main:app"

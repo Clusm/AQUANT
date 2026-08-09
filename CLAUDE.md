@@ -1,12 +1,13 @@
-# TradingAgents-Astock
+# TradingAgents-quant
 
 ## 项目概述
-基于 [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)（65K Stars）的 A 股深度特化 fork。多 Agent 投研框架，7 个 Analyst 角色通过 Bull/Bear 辩论 + 三方风险辩论生成投资报告。
+基于 [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)（65K Stars）的 A 股深度特化 fork,在 LLM 多 Agent 投研流水线前插入 46 策略量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构。7 个 Analyst 角色通过 Bull/Bear 辩论 + 三方风险辩论生成投资报告,最终由 Conflict Resolver 节点输出 🟢强买/🟡关注/🟠冲突/🔴弃 4 档推荐。
 
 - **仓库**: https://github.com/simonlin1212/TradingAgents-astock
 - **协议**: Apache 2.0
 - **Python**: >=3.10
-- **当前版本**: 0.2.18
+- **当前版本**: 0.3.0
+- **包名**: tradingagents-quant (editable install: `pip install -e .`)
 
 ## 架构
 
@@ -41,8 +42,13 @@
 ### 依赖冲突（v0.2.6 已缓解）
 mootdx 锁死 httpx==0.25.2，与 langchain-google-genai 的 httpx>=0.28.1 冲突。v0.2.6 将 google-genai 移至可选依赖 `[google]`，`pip install -e .` 不再冲突。需要 Google 模型时 `pip install -e ".[google]"`。
 
-### akshare 已移除（v0.2.5）
-v0.2.5 起完全移除 akshare 依赖，所有数据通过直连 HTTP API 获取。
+### akshare 依赖现状（数据拉取主链路已直连 HTTP）
+v0.2.5 起日线/增量/指数数据经 `sina_fetcher.py` 直连 sina HTTP API，不再走 akshare。但 akshare/adata **仍是运行时依赖**（pyproject 未声明，需自行安装），用于：
+- 全市场代码/上市日期：`universe.get_list_dates()` → `fetcher.fetch_all_stock_codes()`（优先 adata，回退 `ak.stock_zh_a_spot`）
+- ST 历史推断：`fetcher.fetch_st_history()` → `fetcher.fetch_st_stocks()`（`ak.stock_zh_a_st_em`）
+- 全量建库：`fetcher.download_all` / `fetch_history_bulk`（仅初始化用，Web 报错提示会引导手动跑）
+
+增量更新单一实现为 `tradingagents.quant.data_update.increment_data`（Web 后台、runner、`scripts/incremental_update.py` 共用），底层复用 `sina_fetcher.fetch_bulk_incremental_sina`。
 
 ### 百度 PAE 资金流接口已下线（v0.2.7 已修复）
 `fundsortlist` 和 `fundflow` 两个接口返回空（2026-05-19 确认）。v0.2.7 已替换为东财 push2 资金流 API。同时修复了 `RPT_ORGANIZATION_BUSSINESS`（改用席位筛选机构）和东财全球资讯 `req_trace` 参数。

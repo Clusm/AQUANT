@@ -150,6 +150,26 @@ def resolve_ticker(user_input: str) -> str:
     )
 
 
+def get_stock_name(ticker: str) -> str | None:
+    """Reverse-lookup a 6-digit A-stock code to its Chinese name.
+
+    Returns the name if found, None if the ticker is not in the mootdx
+    stock list (e.g. ETFs, indices, or invalid codes). On mootdx unreachable,
+    returns None rather than raising - callers fall back to showing the raw
+    code.
+    """
+    if not ticker:
+        return None
+    code = ticker.strip()
+    if not _re.match(r"^[036]\d{5}$", code):
+        return None
+    try:
+        _, c2n = _build_name_code_map()
+    except ValueError:
+        return None
+    return c2n.get(code)
+
+
 # ---------------------------------------------------------------------------
 # mootdx client (singleton)
 # ---------------------------------------------------------------------------
@@ -178,20 +198,31 @@ def _probe_tdx(ip: str, port: int, timeout: float = 2.0) -> bool:
 def _get_mootdx_client():
     """Lazy-init 健壮版 mootdx Quotes client（TCP 连接，可复用）。
 
-    规避 mootdx 0.11.x 全新安装的 BESTIP 空串 bug：先 TCP 探测内置服务器列表、
+    规避 mootdx 0.11.x 全新安装的 BESTIP 空串 bug：并行 TCP 探测内置服务器列表、
     用第一个可达的显式 server 绕过 BESTIP；三级 fallback（bestip 测速 → 裸 factory →
     明确 RuntimeError）保证 IP 老化/换网/老用户场景都能工作。
+
+    并行探测：使用 ThreadPoolExecutor 同时探测所有服务器，最坏等待时间从 20s 降到 2s。
     """
     global _mootdx_client
     if _mootdx_client is not None:
         return _mootdx_client
 
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from mootdx.quotes import Quotes
 
-    for ip, port in _TDX_SERVERS:
-        if _probe_tdx(ip, port):
-            _mootdx_client = Quotes.factory(market="std", server=(ip, port))
-            return _mootdx_client
+    # 并行探测所有 TDX 服务器，取第一个可达的
+    with ThreadPoolExecutor(max_workers=len(_TDX_SERVERS)) as executor:
+        fut_to_addr = {executor.submit(_probe_tdx, ip, port): (ip, port) for ip, port in _TDX_SERVERS}
+        for fut in as_completed(fut_to_addr):
+            if fut.result():
+                ip, port = fut_to_addr[fut]
+                _mootdx_client = Quotes.factory(market="std", server=(ip, port))
+                # Cancel remaining probes
+                for other_fut in fut_to_addr:
+                    if other_fut is not fut:
+                        other_fut.cancel()
+                return _mootdx_client
     try:
         _mootdx_client = Quotes.factory(market="std", bestip=True)  # fallback 1
         return _mootdx_client
@@ -883,17 +914,19 @@ def get_fundamentals(
 # ---- 4. get_balance_sheet ----
 
 
-def _sina_stock_code(code: str) -> str:
-    """Pure 6-digit code → sina format (sh688017 / sz000001 / bj832000)."""
-    return f"{_get_prefix(code)}{code}"
-
-
 def _get_financial_report_sina(
     code: str, report_type: str, freq: str, curr_date: str = None,
 ) -> pd.DataFrame:
     """Shared helper: fetch financial report via Sina direct HTTP API.
 
     report_type: '资产负债表' | '利润表' | '现金流量表'
+
+    新浪 API 返回结构(2026 验证):
+      result.data.report_list: dict[date_str, {
+        data: [{item_field, item_title, item_value, item_tongbi, ...}, ...],
+        publish_date, rType, ...
+      }]
+    每个 report_list key 是 YYYYMMDD 格式的报告日。
     """
     _report_type_map = {
         "资产负债表": "fzb",
@@ -916,21 +949,49 @@ def _get_financial_report_sina(
     d = r.json()
 
     result = d.get("result", {}).get("data", {})
-    items = result.get(source_type, [])
-    if not isinstance(items, list) or not items:
+    report_list = result.get("report_list", {})
+    if not isinstance(report_list, dict) or not report_list:
         return pd.DataFrame()
 
-    df = pd.DataFrame(items)
+    # 每个 report_list key 是 YYYYMMDD 报告日,展开成 wide format:一行一个报告期
+    rows: list[dict] = []
+    for date_str, payload in report_list.items():
+        if not isinstance(payload, dict):
+            continue
+        items = payload.get("data", [])
+        if not isinstance(items, list) or not items:
+            continue
+        row: dict = {
+            "报告日": pd.Timestamp(date_str),
+            "发布日": payload.get("publish_date"),
+            "报告类型": payload.get("rType"),
+            "币种": payload.get("rCurrency"),
+        }
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            field = it.get("item_field")
+            if not field:
+                continue
+            row[field] = it.get("item_value")
+            row[f"{field}_tongbi"] = it.get("item_tongbi")
+            row[f"{field}_title"] = it.get("item_title")
+        rows.append(row)
 
-    # Filter by curr_date
-    if curr_date and "报告日" in df.columns:
-        df["报告日"] = pd.to_datetime(df["报告日"], errors="coerce")
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values("报告日", ascending=False).reset_index(drop=True)
+
+    # Filter by curr_date(回测时只看 curr_date 之前发布的报告)
+    if curr_date:
         cutoff = pd.to_datetime(curr_date)
         df = df[df["报告日"] <= cutoff]
 
-    # Filter by frequency (annual = month 12 reports only)
-    if freq.lower() == "annual" and "报告日" in df.columns:
-        months = pd.to_datetime(df["报告日"], errors="coerce").dt.month
+    # Filter by frequency(annual = 仅 12 月报告)
+    if freq.lower() == "annual":
+        months = df["报告日"].dt.month
         df = df[months == 12]
 
     return df.head(8)

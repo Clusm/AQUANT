@@ -1,4 +1,4 @@
-TradingAgents-Astock
+TradingAgents-quant
 Copyright 2026 Simon (github.com/simonlin1212)
 
 This product is a fork of TradingAgents, originally developed by
@@ -10,11 +10,17 @@ Licensed under the Apache License, Version 2.0
 (https://www.apache.org/licenses/LICENSE-2.0)
 
 Modifications in this fork include:
-- A-stock (China mainland) data layer using mootdx, Tencent Finance, and akshare
+- A-stock (China mainland) data layer using mootdx, Tencent Finance, Eastmoney,
+  Sina Finance, Tonghuashun 10jqka, CLS.cn, and Baidu Gushitong (direct HTTP,
+  no third-party database dependency)
 - Three new A-stock specific analyst agents (Policy, Hot Money, Lockup)
 - A-stock trading constraints (T+1, price limits, lot sizes) in Trader and PM
 - Chinese language output support
 - CSI 300 benchmark for alpha calculation (replacing SPY)
+- v0.3.0: Quant pre-filter layer (tradingagents/quant/, 46 strategies, multiprocessing.Pool)
+- v0.3.0: LangGraph topology extension (Quant Picker -> 7 Analyst -> ... -> Conflict Resolver)
+- v0.3.0: Web UI 4-tab workflow (量化选股 / AI 深度分析 / 综合推荐 / 历史)
+- v0.3.0: Conflict Resolver node (rule-based, 🟢强买/🟡关注/🟠冲突/🔴弃 4-tier labels)
 - Various prompt and pipeline adaptations for A-share market specifics
 
 See CHANGES_FROM_UPSTREAM.md for the full list of modifications.

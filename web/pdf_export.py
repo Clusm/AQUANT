@@ -30,7 +30,12 @@ except ImportError as exc:
     WrapMode = None
     _FPDF_IMPORT_ERROR = exc
 
-from web.stock_display import normalize_stock_mentions, stock_display_label
+from web.stock_display import (
+    normalize_stock_mentions,
+    signal_style,
+    stock_display_label,
+    strip_think_tags,
+)
 
 
 _FPDF_VERSION = getattr(_fpdf_mod, "__version__", None) or getattr(_fpdf_mod, "FPDF_VERSION", "0")
@@ -296,10 +301,6 @@ def _collection_font_number(path: Path) -> int:
     return _TTC_SC_FACE_INDEXES.get(path.name, 0)
 
 
-def _strip_think(text: str) -> str:
-    return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
-
-
 def _strip_md_inline(text: str) -> str:
     """Remove inline markdown formatting: **bold**, *italic*, `code`, [link](url)."""
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
@@ -321,12 +322,9 @@ def _format_table_cells(cells: list[str]) -> str:
 
 
 def _signal_color(signal: str) -> tuple[int, int, int]:
-    s = signal.upper()
-    if "BUY" in s:
-        return (34, 197, 94)
-    if "SELL" in s:
-        return (239, 68, 68)
-    return (251, 191, 36)
+    """Map signal text to RGB color (shared signal_style provides hex)."""
+    color, _ = signal_style(signal)
+    return tuple(int(color[i : i + 2], 16) for i in (1, 3, 5))
 
 
 _REPORT_SECTIONS = [
@@ -429,7 +427,7 @@ class _ReportPDF(FPDF):
         r, g, b = _signal_color(self.signal)
         self._use_font("B", 40)
         self.set_text_color(r, g, b)
-        self.cell(0, 20, self.signal.upper(), align="C")
+        self.cell(0, 20, self.signal, align="C")
         self.ln(20)
 
         self._use_font("", 9)
@@ -449,7 +447,7 @@ class _ReportPDF(FPDF):
         self.cell(0, 10, title)
         self.ln(12)
 
-        cleaned = _strip_think(content)
+        cleaned = strip_think_tags(content)
         self._render_markdown(cleaned)
 
     def _render_markdown(self, text: str) -> None:
@@ -560,10 +558,17 @@ def _collect_sections(
     """
     sections: list[tuple[str, str]] = []
 
+    quant_ctx = final_state.get("quant_pick_context", "")
+    if quant_ctx:
+        text = strip_think_tags(str(quant_ctx))
+        if ticker:
+            text = normalize_stock_mentions(text, ticker, final_state)
+        sections.append(("量化选股上下文", text))
+
     for key, title in _REPORT_SECTIONS:
         content = final_state.get(key, "")
         if content:
-            text = _strip_think(str(content))
+            text = strip_think_tags(str(content))
             if ticker:
                 text = normalize_stock_mentions(text, ticker, final_state)
             sections.append((title, text))
@@ -578,21 +583,21 @@ def _collect_sections(
         if debate.get("judge_decision"):
             parts.append(f"\n=== 研究经理决策 ===\n{debate['judge_decision']}")
         if parts:
-            text = _strip_think("\n".join(parts))
+            text = strip_think_tags("\n".join(parts))
             if ticker:
                 text = normalize_stock_mentions(text, ticker, final_state)
             sections.append(("多空辩论", text))
 
     trader_decision = final_state.get("trader_investment_decision", "")
     if trader_decision:
-        text = _strip_think(str(trader_decision))
+        text = strip_think_tags(str(trader_decision))
         if ticker:
             text = normalize_stock_mentions(text, ticker, final_state)
         sections.append(("交易员决策", text))
 
     inv_plan = final_state.get("investment_plan", "")
     if inv_plan:
-        text = _strip_think(str(inv_plan))
+        text = strip_think_tags(str(inv_plan))
         if ticker:
             text = normalize_stock_mentions(text, ticker, final_state)
         sections.append(("最终投资建议", text))
@@ -608,14 +613,14 @@ def _collect_sections(
         if risk.get("judge_decision"):
             parts.append(f"\n=== 风控决策 ===\n{risk['judge_decision']}")
         if parts:
-            text = _strip_think("\n".join(parts))
+            text = strip_think_tags("\n".join(parts))
             if ticker:
                 text = normalize_stock_mentions(text, ticker, final_state)
             sections.append(("风控评估", text))
 
     final_decision = final_state.get("final_trade_decision", "")
     if final_decision:
-        text = _strip_think(str(final_decision))
+        text = strip_think_tags(str(final_decision))
         if ticker:
             text = normalize_stock_mentions(text, ticker, final_state)
         sections.append(("最终决策", text))
@@ -655,7 +660,7 @@ def generate_markdown(final_state: dict[str, Any], ticker: str, trade_date: str,
         f"- **股票代码**：{ticker_label}",
         f"- **分析日期**：{trade_date}",
         f"- **生成时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        f"- **交易信号**：**{signal.upper()}**",
+        f"- **交易信号**：**{signal}**",
         "",
         "> ⚠️ 本报告由 AI 多 Agent 系统自动生成，仅供学习研究与技术演示，"
         "不构成任何投资建议。投资决策请咨询持牌专业机构，使用本报告所产生的"

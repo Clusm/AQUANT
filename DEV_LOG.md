@@ -541,6 +541,129 @@ pyproject.toml:
 
 ---
 
+## Week 8 - 量化层整合(2026-07-18 ~ 2026-07-19) ✅ 完成
+
+**目标**: 在 LLM 多 Agent 投研流水线之前插入 46 策略量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构。基于 TradingAgents-astock v0.2.18 fork 出 TradingAgents-quant 项目。
+
+**整合计划**: `INTEGRATION_PLAN.md`(~50 文件,5 大类 A/B/C/D/E,P0-P5 分阶段 ~16-20 天 MVP)。实际 2 天完成 MVP。
+
+### 类 A 量化层迁移(23 文件,2026-07-18)
+
+- `tradingagents/quant/` 23 个文件全部从 stock_pick_live 迁入
+- 46 策略(S=11/A=18/B=14/C=3)迁到 `tradingagents/quant/strategy/`
+- `strategy_library_final.py` 2267 行,46 处 `module` 字段替换为 `tradingagents.quant.strategy.xxx`
+- `quant_picker.py` 451 行,`pick()` API 完整
+- ✅ FINAL_STATS 已修正:total=46/B=14(原错标 42/B=10)
+
+### 类 B LangGraph 集成(24 文件,2026-07-18)
+
+- `agent_states.py`: 加 `quant_pick_context` + `final_ranked_decision` 字段
+- `default_config.py`: 加 7 个 quant_* 配置(quant_layer_enabled / quant_daily_cache_name="daily_main_board_liquid" / quant_top_n_default=20 / quant_n_workers=8 / quant_slice_days=0 / quant_top_k_per_strategy=2 / quant_compare_llm_enabled=False)
+- `agents/quant_picker_node.py`(154 行): LangGraph 节点封装,batch 模式 no-op 优化
+- `agents/conflict_resolver.py`(214 行): 冲突解决节点(纯规则,无 LLM),6 种标签组合 🟢强买 / 🟡关注 / 🟠冲突 / 🔴弃
+- `graph/setup.py`: 拓扑改造完成,`START -> Quant Picker -> first Analyst -> ... -> Portfolio Manager -> Conflict Resolver -> END`
+- `agent_utils.py`: `build_quant_context(state)` 函数已加
+- 7 个 Analyst:market/social/news/fundamentals/policy/hot_money/lockup 全部注入 `quant_context=build_quant_context(state)`
+- `portfolio_manager.py`: 已改
+
+### 类 D CLI 改造(2026-07-18 完成)
+
+- **D1 `cli/main.py`**: 末尾 `register_quant_pick(app)` 注册 quant-pick 子命令(原 analyze 不动)
+- **D2 `cli/quant_pick.py`**(~260 行): Typer 子命令,9 个选项,4 种输出格式(terminal/json/csv/markdown),默认 `--cache daily_main_board_liquid`
+- **D3 `scripts/daily_pipeline.py`**(~250 行): 每日 cron 入口,11 个选项,默认只跑量化层,`--with-llm` 启用 LLM 深度分析(对 Top N 逐只调 `TradingAgentsGraph.propagate()`),落盘 `outputs/daily/<YYYY-MM-DD>/`
+
+### 类 E 配置依赖(2026-07-19 完成)
+
+- ✅ E1 `pyproject.toml`: dependencies 加 `numpy>=1.24` / `pyarrow>=14.0`;新增 `[project.optional-dependencies] quant = [...]`;包名改 `tradingagents-quant`,版本 0.3.0
+- ✅ E2 `.env.example`: 加 `QUANT_CACHE_DIR` 环境变量说明
+- ✅ E3 `requirements-quant.txt`: 新建,量化层独立依赖(pandas/numpy/pyarrow/requests/pytz)
+
+### 类 C Web UI 4-tab 重构(2026-07-19 完成)
+
+10 个文件,Streamlit tabs 重构 + 量化选股 tab + 综合推荐 tab:
+
+- **`web/app.py`** + **`web/app_main.py`** 拆分: app.py 改最小入口(只含 `if __name__ == "__main__":` guard),app_main.py 装所有 streamlit 代码。**修复 Windows multiprocessing spawn worker 重复 import 导致的进程增殖崩溃**。
+- **4 tab 布局**: 📊 量化选股 / 🤖 AI 深度分析 / 🎯 综合推荐 / 📜 历史
+- **`components/quant_pick.py`**: Top N 候选表 + 全选 checkbox + 中文名展示 + 命中策略详情折叠
+- **`components/recommendation.py`**: 综合推荐 tab,按 🟢强买 / 🟡关注 / 🟠冲突 / 🔴弃 四类展示
+- **`components/progress_panel.py`**: 加 `render_quant_progress` 函数,量化层 46 策略并行进度条
+- **`progress.py`**: 加 `QuantProgressTracker` 子类(独立阶段常量,不动 `PIPELINE_STAGES` 编号)
+- **`runner.py`**: 加 `run_quant_pick_in_thread`,后台线程跑 `pick()` 流式消费
+- **`history.py`**: 加 `get_quant_history` / `save_quant_pick` / `save_recommendation`
+- **`pdf_export.py`**: `_collect_sections` 头部插量化上下文段
+- **品牌改名**: TradingAgents-Astock -> **Aquant 投研工具**(Web UI 标题)
+
+### 性能优化(2026-07-19 完成)
+
+`daily_main_board`(3042 股) -> `daily_main_board_liquid`(2129 股,流动性前 70%),6 处文件统一改:
+- `default_config.py` `quant_daily_cache_name`
+- `quant_picker.py` `pick()` 默认参数 + `__main__` argparse
+- `cli/quant_pick.py` `--cache` 默认
+- `scripts/daily_pipeline.py` `--cache` 默认
+- `agents/quant_picker_node.py` fallback default
+
+实测对比(workers=8,--today 2026-07-14):
+- v1(全量 cache,4 workers): 1836.8s = 30.6 min
+- v2(liquid cache,8 workers): 733.6s = 12.2 min
+- **加速 2.50x**,接近 <10 min 目标
+- 慢策略 258s -> 142-159s(-40%),快策略 14-20s -> 11-15s
+- Top 5 差异: v1 [603233/003030/603669/000739/603313] vs v2 [600428/000739/603669/000989/603313],共同 3 个(603669/000739/603313)。差异因 universe 过滤(603233/003030 流动性被过滤,符合预期)
+
+### 端到端冒烟测试(2026-07-18)
+
+```
+QUANT_CACHE_DIR=stock_pick_live/outputs/cache py -3 -m cli.main quant-pick   --today 2026-07-14 --top-n 10 --workers 8 --output-format json
+```
+
+- 46 策略全跑通,0 错误
+- v2 总耗时 12.2 分钟
+- Top 1: 600428(加权分 24.81,6 个策略命中)
+- JSON 58KB,7 个顶层字段(today / elapsed / n_strategies_run / n_strategies_error / top_picks / all_records / per_strategy_stats)
+
+### 默认 LLM 改 DeepSeek(2026-07-19)
+
+- `default_config.py` `llm_provider` `openai -> deepseek`,`deep_think_llm` `gpt-5.4 -> deepseek-v4-pro`,`quick_think_llm` `gpt-5.4-mini -> deepseek-v4-flash`
+- `web/components/sidebar.py` `_PROVIDERS` 缩减到 DeepSeek 一项(快速=Flash,深度=Pro)
+- `tradingagents/llm_clients/model_catalog.py` DeepSeek deep 模型列表重排,Pro 优先
+
+### Web UI bug 修复(2026-07-19~20)
+
+- **multiprocessing spawn 崩溃循环**: 原 `web/app.py` 所有 streamlit 代码在模块顶层,Windows spawn worker 重复 import 时重执行 streamlit,导致进程数无限增殖。拆为 app.py(最小入口)+ app_main.py(main 函数)。
+- **量化层"无候选股票"**: `pick()` 加日期 fallback,当 `today` 超过 cache 最新日期时自动回退到 cache 最新日期,避免 46 策略 `_eligible_by_date.get(current_date)` 返回 None 导致零信号。
+- **选股历史点不显示**: Tab 1/4 点历史按钮加载 `quant_picks` 后未渲染。加新分支 `elif quant_picks and len(top_picks)>0:` 调 `render_quant_picker`,且历史按钮同时清 `quant_tracker` 避免 branch 2 优先匹配。
+- **launch.py 双实例**: `subprocess.run` 启动第二个 streamlit,绕过为直接 `streamlit run web/app.py`。
+
+### 真 LLM 端到端测试(⏳ 待 API quota,2026-07-19)
+
+用户选 DeepSeek provider 但暂跳过(无 API key)。待用户配 `.env` 后跑 `tradingagents analyze` 验证:
+- Quant Picker 节点写入 `state["quant_pick_context"]` 非空
+- Conflict Resolver 节点写入 `state["final_ranked_decision"]` 含 🟢/🟡/🟠/🔴 标签
+
+可复用 `scripts/daily_pipeline.py --with-llm --tickers <code>` 自动化测试,落盘 `outputs/daily/<date>/llm/<ticker>/final_state.json`。
+
+### 关键环境变量
+
+- `QUANT_CACHE_DIR`: 覆盖默认 `tradingagents/quant/outputs/cache/`,开发期指向 `stock_pick_live/outputs/cache/` 共享数据
+- `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` 等: LLM provider key,见 `.env.example`
+- `BACKEND_URL`: 第三方中转/代理 API 网关,可在 Web UI 侧栏或 `.env` 设
+
+### 性能观察(后续优化方向)
+
+- 慢策略 142-159s/个(35% 占比): 周月季级别 needs_full=True 策略,如 M_mwd_res_loose / M_w_macd_gc_strict / M_q_bo_mid_default / M_m_rsi_bo_strict 等
+- 快策略 11-15s/个(65%): 日线级策略
+- **进一步优化方向(未做)**: 周月线 indicator 预计算缓存(每个策略 _precompute_features 重复算),目标降到 <5 分钟
+
+### 关键决策(2026-07-18 INTEGRATION_PLAN 第 7 节)
+
+1. Top N 默认 20,可选 5/10/20(不做 50)
+2. 多 LLM 对比功能**暂不实现**(defer 到 P5 之后),字段保留默认 False
+3. 冲突展示规则(无副 LLM 简化版):
+   - 量化 Buy + LLM Buy = 🟢 强买
+   - 量化 Buy + LLM Hold = 🟡 关注
+   - 量化 Buy + LLM Sell = 🟠 冲突
+   - 量化无 + LLM Buy = 🟡 关注
+   - 量化无 + LLM Sell = 🔴 弃
+
 ## 协作约定
 
 - 写代码前先读 `CHANGES_FROM_UPSTREAM.md`(待建)了解哪些已改、哪些未动
