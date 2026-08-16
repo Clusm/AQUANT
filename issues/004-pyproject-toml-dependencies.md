@@ -1,6 +1,5 @@
 # Issue #4: pyproject.toml 依赖问题
 
-- **GitHub**: https://github.com/simonlin1212/TradingAgents-astock/issues/4
 - **报告人**: @s07yyz
 - **日期**: 2026-05-14
 - **状态**: ✅ 无需操作

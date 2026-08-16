@@ -1,6 +1,5 @@
 # Issue #3: 新闻接口异常
 
-- **GitHub**: https://github.com/simonlin1212/TradingAgents-astock/issues/3
 - **报告人**: @fengyunzyl
 - **日期**: 2026-05-14
 - **状态**: ⏳ 等待反馈

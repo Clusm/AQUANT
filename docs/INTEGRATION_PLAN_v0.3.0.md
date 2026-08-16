@@ -1,7 +1,7 @@
 # TradingAgents-quant 整合改动清单
 
 > 日期: 2026-07-18(初稿)/ 2026-07-19(完成)
-> 基座: TradingAgents-astock v0.2.18(fork 自 simonlin1212/TradingAgents-astock)
+> 基座: TradingAgents 的 A 股深度特化版(v0.2.18)，本计划在其上插入量化前置筛选层
 > 目标: 在现有 LLM 多 Agent 投研流水线前插入"量化策略前置筛选层",形成"量化广度扫描 + LLM 深度分析"双层架构
 
 ## 0. 实施完成状态(2026-07-19)
@@ -18,7 +18,7 @@
 | 真 LLM 端到端测试 | - | - | ⏳ 待 API quota |
 
 **版本**: 0.2.18 -> 0.3.0(详见 CHANGELOG.md)
-**包名**: tradingagents-astock -> tradingagents-quant
+**包名**: 原 A 股 fork 包名 -> tradingagents-quant
 **Web UI 品牌**: TradingAgents-Astock -> Aquant 投研工具
 
 后续优化方向见本文档第 5 节"风险点与决策点"和 CHANGELOG 0.3.0 的 Fixed/Performance 段落。

@@ -3,7 +3,7 @@
 ## 项目概述
 基于 [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)（65K Stars）的 A 股深度特化 fork,在 LLM 多 Agent 投研流水线前插入 18 策略量化前置筛选层(top18 终态库,S=5/A=11/B=2,来源 stock_selector `strategy_library_active_top18.py`,OOS 口径 2025-01-01~2026-07-14),形成"量化广度扫描 + LLM 深度分析"双层架构。7 个 Analyst 角色通过 Bull/Bear 辩论 + 三方风险辩论生成投资报告,最终由 Conflict Resolver 节点输出 🟢强买/🟡关注/🟠冲突/🔴弃 4 档推荐。
 
-- **仓库**: https://github.com/simonlin1212/TradingAgents-astock
+- **仓库**: https://github.com/Clusm/AQUANT
 - **协议**: Apache 2.0
 - **Python**: >=3.10
 - **当前版本**: 0.4.0
@@ -91,5 +91,4 @@ deepseek-v4-flash 等模型在 tool call 时可能返回中文股票名而非 6 
 - Web UI 改动在 `web/` 目录，用 `streamlit run web/launch.py` 本地测试
 
 ## 相关项目
-- [a-stock-data](https://github.com/simonlin1212/a-stock-data) — A 股 MCP 数据服务（Claude Code 用的 skill）
 - 上游 [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) — 原版框架

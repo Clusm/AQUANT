@@ -27,8 +27,8 @@
 ### 安装步骤
 
 ```bash
-git clone https://github.com/simonlin1212/TradingAgents-astock.git
-cd TradingAgents-astock
+git clone https://github.com/Clusm/AQUANT.git
+cd AQUANT
 pip install -e .
 ```
 

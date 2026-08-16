@@ -543,7 +543,7 @@ pyproject.toml:
 
 ## Week 8 - 量化层整合(2026-07-18 ~ 2026-07-19) ✅ 完成
 
-**目标**: 在 LLM 多 Agent 投研流水线之前插入 46 策略量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构。基于 TradingAgents-astock v0.2.18 fork 出 TradingAgents-quant 项目。
+**目标**: 在 LLM 多 Agent 投研流水线之前插入 46 策略量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构。基于 A 股深度特化版 v0.2.18 建立 TradingAgents-quant 项目。
 
 **整合计划**: `INTEGRATION_PLAN.md`(~50 文件,5 大类 A/B/C/D/E,P0-P5 分阶段 ~16-20 天 MVP)。实际 2 天完成 MVP。
 

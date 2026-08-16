@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [
-    {name = "simonlin1212", email = "simonlin1212@users.noreply.github.com"},
+    {name = "Clusm", email = "clusm@users.noreply.github.com"},
 ]
 dependencies = [
     "langchain-core>=0.3.81",
@@ -39,11 +39,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/simonlin1212/TradingAgents-astock"
-Repository = "https://github.com/simonlin1212/TradingAgents-astock"
-Issues = "https://github.com/simonlin1212/TradingAgents-astock/issues"
+Homepage = "https://github.com/Clusm/AQUANT"
+Repository = "https://github.com/Clusm/AQUANT"
+Issues = "https://github.com/Clusm/AQUANT/issues"
 Upstream = "https://github.com/TauricResearch/TradingAgents"
-Changelog = "https://github.com/simonlin1212/TradingAgents-astock/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/Clusm/AQUANT/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 google = ["langchain-google-genai>=4.0.0"]

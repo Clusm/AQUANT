@@ -1,6 +1,5 @@
 # Issue #46: Docker 命名卷权限崩溃 + 部署文档不清
 
-- **GitHub**: https://github.com/simonlin1212/TradingAgents-astock/issues/46
 - **报告人**: @tyraanTao（@hotonion / @ljcugb 跟帖）
 - **日期**: 2026-05-31
 - **状态**: 🟡 Docker 权限已修(v0.2.14)，中文名崩溃待用户贴日志

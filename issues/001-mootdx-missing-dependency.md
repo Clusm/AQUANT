@@ -1,6 +1,5 @@
 # Issue #1: No module named 'mootdx'
 
-- **GitHub**: https://github.com/simonlin1212/TradingAgents-astock/issues/1
 - **报告人**: @badandboy
 - **日期**: 2026-05-14
 - **状态**: ✅ 已修复

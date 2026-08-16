@@ -1,6 +1,5 @@
 # Issue #2: ticker contains characters not allowed in a filesystem path
 
-- **GitHub**: https://github.com/simonlin1212/TradingAgents-astock/issues/2
 - **报告人**: @badandboy
 - **日期**: 2026-05-14
 - **状态**: ✅ 已修复

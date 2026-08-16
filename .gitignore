@@ -229,3 +229,4 @@ stock_pick_live/
 
 # Claude Code local scheduled tasks (machine-specific, not for release)
 .claude/
+release/

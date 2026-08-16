@@ -1,10 +1,8 @@
 <h1 align="center">Aquant 投研工具</h1>
 
 <p align="center">
-  本项目基于两个上游项目改造而成:<br>
-  <a href="https://github.com/TauricResearch/TradingAgents">TauricResearch/TradingAgents</a>(65K ⭐ 原版多 Agent 框架)<br>
-  → <a href="https://github.com/simonlin1212/TradingAgents-astock">simonlin1212/TradingAgents-astock</a>(A 股深度特化 fork,v0.2.18)<br>
-  → <b>TradingAgents-quant</b>(v0.4.0,加量化前置筛选层)
+  本项目基于 <a href="https://github.com/TauricResearch/TradingAgents">TauricResearch/TradingAgents</a> 改造而来:<br>
+  → 增加 A 股数据层、7 分析师、量化前置筛选层，形成 <b>TradingAgents-quant</b>(v0.4.0)。
 </p>
 
 <p align="center">
@@ -17,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/simonlin1212/tradingagents-astock/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/simonlin1212/tradingagents-astock?style=social"/></a>
-  <a href="https://github.com/simonlin1212/tradingagents-astock/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/simonlin1212/tradingagents-astock?style=social"/></a>
+  <a href="https://github.com/Clusm/AQUANT/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Clusm/AQUANT?style=social"/></a>
+  <a href="https://github.com/Clusm/AQUANT/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/Clusm/AQUANT?style=social"/></a>
   <a href="https://arxiv.org/abs/2412.20138"><img alt="论文" src="https://img.shields.io/badge/论文-arXiv_2412.20138-B31B1B?logo=arxiv"/></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache_2.0-blue"/></a>
   <a href="./CHANGES_FROM_UPSTREAM.md"><img alt="改动记录" src="https://img.shields.io/badge/改动记录-CHANGES-orange"/></a>
@@ -38,14 +36,13 @@
 - [配置说明](#配置说明)
 - [项目结构](#项目结构)
 - [致谢](#致谢)
-- [Donate](#donate)
 - [许可证](#许可证)
 
 ---
 
 ## 项目溯源
 
-本项目是两层 fork 后的产物,继承并扩展了两个上游项目:
+本项目基于 TauricResearch/TradingAgents 改造而来，继承并扩展了其多 Agent 辩论框架：
 
 ```
 TauricResearch/TradingAgents (65K ⭐ 原版)
@@ -53,36 +50,27 @@ TauricResearch/TradingAgents (65K ⭐ 原版)
   ├─ 4 Analyst + Bull/Bear + Risk Panel + Portfolio Manager
   └─ yfinance + Alpha Vantage 数据层
        │
-       ↓ simonlin1212 fork(v0.2.18,2026-05-04)
-       │
-simonlin1212/TradingAgents-astock (A 股深度特化)
-  ├─ 数据层重写:mootdx + 东财 + 新浪 + 同花顺(零依赖直连 HTTP)
-  ├─ 7 Analyst(新增 政策/游资/解禁 3 个 A 股特化角色)
-  ├─ 辩论层 A 股框架(T+1/涨跌停/北向/游资席位)
-  ├─ Trader A 股约束(T+1/涨跌停/手数/ST)
-  ├─ Web UI(Streamlit 12 阶段进度 + PDF 导出)
-  └─ 多 LLM provider(MiniMax/DeepSeek/Qwen/GLM/OpenAI/Anthropic 等 9 个)
-       │
-       ↓ 2026-07-18 加量化层
+       ↓ TradingAgents-quant 扩展
        │
 TradingAgents-quant (v0.4.0,本项目)
-  ├─ 新增量化前置筛选层(tradingagents/quant/)
+  ├─ A 股数据层重写:mootdx + 东财 + 新浪 + 同花顺(直连 HTTP)
+  ├─ 7 Analyst(新增 政策/游资/解禁 3 个 A 股特化角色)
+  ├─ A 股辩论/交易约束(T+1、涨跌停、手数、ST)
+  ├─ 量化前置筛选层(tradingagents/quant/,18 策略)
   ├─ LangGraph 拓扑扩展:START -> Quant Picker -> ... -> Conflict Resolver -> END
-  ├─ Web UI 7-tab 重构(量化选股 / AI 深度分析 / 买入计划 / 持仓跟踪 / 交易记录 / 综合推荐 / 历史)
-  ├─ CLI 加 quant-pick 子命令 + daily_pipeline 脚本
-  ├─ Conflict Resolver 节点(纯规则,🟢强买/🟡关注/🟠冲突/🔴弃)
-  └─ 默认 LLM 改 DeepSeek(quick=Flash / deep=Pro)
+  ├─ Web UI 7-tab 重构
+  ├─ CLI quant-pick 子命令 + daily_pipeline 脚本
+  ├─ Conflict Resolver 节点(🟢强买/🟡关注/🟠冲突/🔴弃)
+  └─ 默认 LLM 改用 DeepSeek(quick=Flash / deep=Pro)
 ```
 
-两个上游项目都是 Apache 2.0 开源,本项目继承许可证,完整归属声明见 [NOTICE](./NOTICE)。
+原版 TauricResearch/TradingAgents 与本项目均采用 Apache 2.0 开源，完整归属声明见 [NOTICE](./NOTICE)。
 
 ## 为什么做这个 Fork
 
 原版 TradingAgents 是一个出色的多 Agent 投研框架,但它针对美股设计:数据走 Yahoo Finance / Alpha Vantage,分析师不懂 A 股制度,辩论和决策完全面向美股市场。
 
-**simonlin1212/TradingAgents-astock** 已完成 A 股特化(数据层 / 7 Analyst / 辩论层 / Trader / Web UI),但缺少**确定性量化信号**--LLM 输出有随机性,纯 LLM 决策难以规模化重复。
-
-**TradingAgents-quant 的目标**:在 LLM 多 Agent 流水线之前插入量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构。量化层提供基于历史回测的确定性信号锚,LLM 层提供语义理解和综合判断,Conflict Resolver 节点据此给最终推荐打 4 档标签。
+**TradingAgents-quant 的目标**:在 A 股深度特化(数据层 / 7 Analyst / 辩论层 / Trader / Web UI)的基础上,于 LLM 多 Agent 流水线之前插入量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构。量化层提供基于历史回测的确定性信号锚,LLM 层提供语义理解和综合判断,Conflict Resolver 节点据此给最终推荐打 4 档标签。
 
 ### 核心改造
 
@@ -227,8 +215,8 @@ v0.3.0 在原 LLM 多 Agent 流水线**之前**插入量化前置筛选层,形�
 
 ```bash
 # Python >= 3.10
-git clone https://github.com/simonlin1212/tradingagents-astock.git
-cd tradingagents-astock
+git clone https://github.com/Clusm/AQUANT.git
+cd AQUANT
 pip install -e .
 
 # 如需使用 Google Gemini 模型（可选）：
@@ -532,12 +520,11 @@ TradingAgents-quant/                          # v0.3.0 改名(原 TradingAgents-
 
 ## 致谢
 
-本项目站在两个上游项目的肩膀上:
+本项目站在 [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)（65K ⭐ 原版）的基础上:
 
-1. **[TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)**(65K ⭐ 原版)- 多 Agent 辩论框架的奠基者,本项目继承其 LangGraph 拓扑和 Agent 角色设计。
-2. **[simonlin1212/TradingAgents-astock](https://github.com/simonlin1212/TradingAgents-astock)**(A 股深度特化 fork,v0.2.18)- 本项目直接基于此 fork,继承其 A 股数据层、7 个 A 股特化 Analyst、辩论层 A 股框架、Trader A 股约束、Web UI 和多 LLM provider 支持。
-
-TradingAgents-quant 在 v0.3.0 新增的量化前置筛选层、Conflict Resolver 节点、Web UI 重构和 CLI quant-pick 子命令,均建立在上游两个项目的基础之上;v0.4.0 进一步加入买入计划与持仓跟踪工作流。
+- 继承其 LangGraph 拓扑与 Agent 角色设计;
+- 增加 A 股数据层、7 Analyst、A 股交易约束、量化前置筛选层、Conflict Resolver 节点;
+- v0.4.0 进一步加入买入计划、持仓跟踪、交易记录与策略跟踪工作流。
 
 **原始论文**:[TradingAgents: Multi-Agents LLM Financial Trading Framework](https://arxiv.org/abs/2412.20138)
 
@@ -548,17 +535,6 @@ TradingAgents-quant 在 v0.3.0 新增的量化前置筛选层、Conflict Resolve
 [Apache License 2.0](./LICENSE)
 
 本项目是 TauricResearch/TradingAgents 的 fork，继承 Apache 2.0 许可证。详见 [NOTICE](./NOTICE)。
-
-## Donate
-
-如果这个工具帮到了你的投研工作流，欢迎请作者喝杯咖啡 ☕
-
-<p align="center">
-  <a href="https://ifdian.net/a/simonlin">爱发电</a> ·
-  <a href="https://buymeacoffee.com/simonlin1212">Buy Me a Coffee</a>
-</p>
-
-> 想要什么功能？欢迎开 [Issue](https://github.com/simonlin1212/tradingagents-astock/issues) 提需求，赞助者的 Issue 优先处理。
 
 ---
 

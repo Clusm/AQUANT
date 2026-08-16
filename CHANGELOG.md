@@ -88,7 +88,7 @@ Breaking changes within the 0.x line are called out explicitly.
 
 ## [0.3.0] — 2026-07-19
 
-本版是 TradingAgents-astock fork 的"量化整合大版本":在原 LLM 多 Agent 投研流水线**之前**插入 46 策略量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构。包名 `tradingagents-astock` -> `tradingagents-quant`,版本 0.2.18 -> 0.3.0。
+本版是 A 股深度特化 fork 的"量化整合大版本":在原 LLM 多 Agent 投研流水线**之前**插入 46 策略量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构。正式定名 `tradingagents-quant`,版本进入 0.3.0。
 
 ### Added - 量化层(类 A,23 文件)
 
@@ -194,7 +194,7 @@ Breaking changes within the 0.x line are called out explicitly.
 
 ### Breaking Changes
 
-- 包名 `tradingagents-astock` -> `tradingagents-quant`。`pip install -e .` 后 import 路径不变(`tradingagents.*` 子模块未改名)。
+- 原 A 股 fork 包名 -> `tradingagents-quant`。`pip install -e .` 后 import 路径不变(`tradingagents.*` 子模块未改名)。
 - 默认 LLM 从 OpenAI 改 DeepSeek。原 OpenAI 用户需在 `.env` 设 `OPENAI_API_KEY` 并在 Web UI 侧栏手动切换 provider(注:Web UI 当前仅展示 DeepSeek,其他 provider 需手动改 sidebar.py `_PROVIDERS`)。
 - `default_config.py` 默认 `quant_layer_enabled=True`,即 `TradingAgentsGraph.propagate()` 默认会跑量化层。若想跳过,设 `config["quant_layer_enabled"]=False`。
 - **2026-07-20**:弃用策略彻底清除。原 46 个策略中 36 个被弃用(前视偏差修复后严重退化),已从 `strategy_library_final.py` 和 `strategy/` 目录物理删除,不保留定义。如需恢复,从 `stock_pick_live` 上游项目重新迁入。
