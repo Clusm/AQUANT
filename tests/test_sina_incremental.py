@@ -7,8 +7,9 @@ cm.update 永久落盘。last_close 继承应修复该边界。
 
 from __future__ import annotations
 
+import time
+
 import pandas as pd
-import pytest
 
 from tradingagents.quant import sina_fetcher
 
@@ -64,6 +65,23 @@ def test_incremental_without_last_close_first_row_nan(monkeypatch):
     assert pd.isna(df.loc[0, "change_pct"])
 
 
+def test_throttle_enforces_min_interval(monkeypatch):
+    """两次请求间隔必须 >= SINA_MIN_INTERVAL(修复前 += wait 会低估约 30%)。"""
+    monkeypatch.setattr(sina_fetcher, "SINA_MIN_INTERVAL", 0.05)
+    sina_fetcher._LAST_REQ_TIME = 0.0  # 复位,首次调用不等待
+
+    sina_fetcher._throttle()  # 首次:无等待,仅记录时刻
+    t0 = time.monotonic()
+    sina_fetcher._throttle()  # 第二次:必须等满 min interval
+    elapsed = time.monotonic() - t0
+    assert elapsed >= 0.05 - 1e-9
+
+    # 第三次紧接着:仍按真实流逝时间计算,间隔同样 >= min interval
+    t1 = time.monotonic()
+    sina_fetcher._throttle()
+    assert time.monotonic() - t1 >= 0.05 - 1e-9
+
+
 def test_get_last_close_map():
     from tradingagents.quant.data_update import _get_last_close_map
 
@@ -76,3 +94,22 @@ def test_get_last_close_map():
     })
 
     assert _get_last_close_map(daily) == {"600000": 10.0, "600001": 3.2}
+
+
+def test_bulk_stall_timeout_returns_partial_instead_of_hanging(monkeypatch):
+    """新浪黑洞式封禁时,stall_timeout 熔断必须把未完成代码计入 failed 并返回。"""
+
+    def slow(code, start_date, end_date, **kwargs):
+        time.sleep(2.0)
+        return pd.DataFrame()
+
+    monkeypatch.setattr(sina_fetcher, "fetch_incremental_sina", slow)
+    t0 = time.monotonic()
+    big, failed = sina_fetcher.fetch_bulk_incremental_sina(
+        ["600000", "600001", "600002"], "2026-08-01", "2026-08-04",
+        max_workers=2, stall_timeout=0.15,
+    )
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.0
+    assert len(failed) == 3
+    assert len(big) == 0

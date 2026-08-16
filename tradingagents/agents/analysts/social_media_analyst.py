@@ -1,5 +1,12 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from tradingagents.agents.utils.agent_utils import build_instrument_context, build_quant_context, extract_report_content, get_language_instruction, get_news
+
+from tradingagents.agents.utils.agent_utils import (
+    build_instrument_context,
+    build_quant_context,
+    extract_report_content,
+    get_language_instruction,
+    get_news,
+)
 
 
 def create_social_media_analyst(llm):

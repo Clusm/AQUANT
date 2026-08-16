@@ -7,6 +7,9 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from web.position_store import create_buy_plan, list_plans
+from web.theme import MUTED, TEXT, TIER, chip, esc, mono
+
 
 def _prepare_display_df(
     picks_df: pd.DataFrame,
@@ -25,11 +28,34 @@ def _prepare_display_df(
     else:
         df["name"] = "--"
 
-    # 历史数据可能缺指标列,缺失时用 0 填充而不是硬崩
+    # 历史数据可能缺指标列或含 NaN(如老缓存无 win_rate),缺失时用 0 填充
+    # 而不是显示 "nan%" / "nand" 破坏表格
     for col, out in (("avg_win_rate", "win_rate_pct"), ("avg_holding_days", "holding_d")):
-        s = df[col] if col in df.columns else pd.Series(0.0, index=df.index)
-        df[out] = (s * 100).round(1).astype(str) + "%" if col == "avg_win_rate" else s.round(1).astype(str) + "d"
+        s = df[col].fillna(0.0) if col in df.columns else pd.Series(0.0, index=df.index)
+        if col == "avg_win_rate":
+            df[out] = (s * 100).round(1).astype(str) + "%"
+        else:
+            # 999 = 信号出场策略(无固定持仓天数)
+            df[out] = s.apply(lambda v: "信号出场" if v >= 999 else f"{round(float(v), 1)}d")
     return df
+
+
+def _tier_chips_html(row: pd.Series) -> str:
+    """S/A/B/C 分级命中徽章;短线与中线计数合并显示。
+
+    中线策略的 tier 是 M_S/M_A/M_B/M_C,旧实现只读 n_S/n_A/n_B/n_C,
+    导致 top18 中大量中线命中时该列看起来为空。
+    """
+    parts = []
+    for tier, color in TIER.items():
+        short = int(row.get(f"n_{tier}", 0) or 0)
+        mid = int(row.get(f"n_M_{tier}", 0) or 0)
+        total = short + mid
+        if total <= 0:
+            continue
+        title = f"{tier} 级命中 {total} 个(短线 {short} / 中线 {mid})"
+        parts.append(chip(f"{tier}{total}", color, title=title))
+    return "".join(parts) or '<span style="color:#333;">·</span>'
 
 
 def _select_all_updates(codes: list[str], new_val: bool, key_prefix: str) -> dict[str, bool]:
@@ -47,6 +73,7 @@ def render_quant_picker(
     all_records: list[dict[str, Any]] | None = None,
     name_map: dict[str, str] | None = None,
     key_prefix: str = "quant_picker",
+    trade_date: str | None = None,
 ) -> list[str]:
     """Render the Top N quant picker table with row-level selection checkboxes.
 
@@ -59,6 +86,8 @@ def render_quant_picker(
         name_map: optional {code: name} for showing 中文名 alongside code.
         key_prefix: Streamlit widget key prefix (avoid collision when this
                     component is rendered in multiple tabs).
+        trade_date: optional signal trade date; when set, each row renders a
+                    "计划买入" button that persists a next-day buy plan.
 
     Returns:
         list of selected stock codes (6-digit strings), preserving the
@@ -75,6 +104,16 @@ def render_quant_picker(
 
     codes: list[str] = df["stock_code"].astype(str).tolist()
 
+    plan_feedback = st.session_state.pop("plan_feedback", None)
+    if plan_feedback:
+        st.toast(plan_feedback)
+
+    planned_by_key: dict[str, str] = {}
+    if trade_date:
+        for _plan in list_plans("planned"):
+            if str(_plan.get("trade_date")) == str(trade_date):
+                planned_by_key[str(_plan.get("ticker"))] = str(_plan.get("plan_id"))
+
     def _on_select_all() -> None:
         """When 全选 toggles, sync every individual checkbox session_state key."""
         new_val = st.session_state[f"{key_prefix}_select_all"]
@@ -83,27 +122,31 @@ def render_quant_picker(
     selected: list[str] = []
 
     st.markdown(
-        f'<div style="margin:0.3rem 0; font-size:0.85rem; color:#888;">'
-        f'Top {len(df)} 候选 · 勾选标的进入 AI 深度分析</div>',
+        f'<div style="margin:0.3rem 0; font-size:0.85rem; color:{MUTED};">'
+        f'Top {len(df)} 候选 · 勾选标的进入 AI 深度分析 · 点击「计划买入」创建次日买入计划</div>',
         unsafe_allow_html=True,
     )
 
-    header = st.columns([0.5, 1.0, 1.6, 0.8, 1.0, 1.0, 0.8])
+    # 列:勾选 / 代码 / 名称 / 分级 / 命中数 / 加权分 / 胜率 / 持仓天 / 计划买入
+    widths = [0.45, 0.9, 1.3, 1.5, 0.6, 0.85, 0.8, 0.7, 1.0]
+    header = st.columns(widths)
     header[0].checkbox(
         "全选",
         key=f"{key_prefix}_select_all",
         on_change=_on_select_all,
         help="勾选/取消全部候选",
     )
-    header[1].markdown("**代码**")
+    header[1].markdown(mono("代码", MUTED), unsafe_allow_html=True)
     header[2].markdown("**名称**")
-    header[3].markdown("**命中数**")
-    header[4].markdown("**加权分**")
-    header[5].markdown("**胜率**")
-    header[6].markdown("**持仓天**")
+    header[3].markdown(mono("分级 S/A/B/C", MUTED), unsafe_allow_html=True)
+    header[4].markdown(mono("命中", MUTED), unsafe_allow_html=True)
+    header[5].markdown(mono("加权分", MUTED), unsafe_allow_html=True)
+    header[6].markdown(mono("胜率", MUTED), unsafe_allow_html=True)
+    header[7].markdown(mono("持仓天", MUTED), unsafe_allow_html=True)
+    header[8].markdown(mono("计划买入", MUTED), unsafe_allow_html=True)
 
     for _, row in df.iterrows():
-        cols = st.columns([0.5, 1.0, 1.6, 0.8, 1.0, 1.0, 0.8])
+        cols = st.columns(widths)
         code = str(row["stock_code"])
         sel_key = f"{key_prefix}_sel_{code}"
         checked = cols[0].checkbox(
@@ -112,12 +155,39 @@ def render_quant_picker(
             key=sel_key,
             label_visibility="collapsed",
         )
-        cols[1].markdown(f"`{code}`")
-        cols[2].markdown(str(row["name"]))
-        cols[3].markdown(str(int(row["n_strategies"])))
-        cols[4].markdown(f"**{row['weighted_score']:.2f}**")
-        cols[5].markdown(row["win_rate_pct"])
-        cols[6].markdown(row["holding_d"])
+        cols[1].markdown(mono(code, TEXT), unsafe_allow_html=True)
+        cols[2].markdown(esc(str(row["name"])), unsafe_allow_html=True)
+        cols[3].markdown(_tier_chips_html(row), unsafe_allow_html=True)
+        cols[4].markdown(mono(str(int(row["n_strategies"])), MUTED), unsafe_allow_html=True)
+        cols[5].markdown(mono(f"{row['weighted_score']:.2f}", TEXT, bold=True), unsafe_allow_html=True)
+        cols[6].markdown(mono(row["win_rate_pct"], TEXT), unsafe_allow_html=True)
+        cols[7].markdown(mono(row["holding_d"], MUTED), unsafe_allow_html=True)
+
+        plan_key = f"{key_prefix}_plan_{code}"
+        if not trade_date:
+            cols[8].button("—", key=plan_key, disabled=True, help="缺少信号日期,无法创建计划")
+        elif code in planned_by_key:
+            cols[8].button("✅ 已计划", key=plan_key, disabled=True, help="该股票已创建买入计划")
+        else:
+            def _add_plan(
+                c: str = code,
+                td: str = trade_date,
+                nm: str = str(row["name"]),
+                picks: pd.DataFrame = picks_df,
+                recs: list[dict[str, Any]] = all_records or [],
+            ) -> None:
+                try:
+                    created = create_buy_plan(c, td, picks, recs, nm)
+                    st.session_state["plan_feedback"] = (
+                        f"✅ {nm}({c}) 已加入买入计划,计划买入日 {created.get('plan_date', '--')}"
+                    )
+                    st.session_state["force_tab"] = "plan"
+                except Exception as exc:
+                    st.session_state["plan_feedback"] = f"❌ {nm}({c}) 创建买入计划失败: {exc}"
+
+            cols[8].button("📋 计划买入", key=plan_key, on_click=_add_plan,
+                           help=f"按 {trade_date} 信号创建买入计划")
+
         if checked:
             selected.append(code)
 

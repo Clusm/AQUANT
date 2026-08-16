@@ -23,9 +23,14 @@ import pandas as pd
 
 from tradingagents.quant.backtest.engine import Signal
 from tradingagents.quant.data.universe import filter_universe_topk
-from tradingagents.quant.features.pipeline import (build_features_vectorized, cross_sectional_zscore,
-                              get_weekly_bars, get_monthly_bars,
-                              merge_asof_weekly, merge_asof_monthly)
+from tradingagents.quant.features.pipeline import (
+    build_features_vectorized,
+    cross_sectional_zscore,
+    get_monthly_bars,
+    get_weekly_bars,
+    merge_asof_monthly,
+    merge_asof_weekly,
+)
 from tradingagents.quant.strategy.base import BaseStrategy
 
 

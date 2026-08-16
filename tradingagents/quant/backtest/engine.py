@@ -7,7 +7,10 @@ from __future__ import annotations
 
 class Signal:
     """策略生成的信号。"""
-    def __init__(self, code: str, score: float, reason: str = ""):
+    def __init__(self, code: str, score: float, direction: str = "buy",
+                 window: str = "morning", reason: str = ""):
         self.code = code
         self.score = score
+        self.direction = direction
+        self.window = window
         self.reason = reason

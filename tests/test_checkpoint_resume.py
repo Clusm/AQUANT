@@ -1,16 +1,12 @@
 """Test checkpoint resume: crash mid-analysis, re-run resumes from last node."""
 
-import sqlite3
 import tempfile
 import unittest
-from pathlib import Path
 from typing import TypedDict
 from unittest.mock import MagicMock
 
-from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 
-from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.graph.checkpointer import (
     checkpoint_step,
     clear_checkpoint,
@@ -18,6 +14,7 @@ from tradingagents.graph.checkpointer import (
     has_checkpoint,
     thread_id,
 )
+from tradingagents.graph.trading_graph import TradingAgentsGraph
 
 # Mutable flag to simulate crash on first run
 _should_crash = False

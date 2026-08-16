@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 import threading
+import time
 import traceback
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -31,6 +31,7 @@ except Exception:
     pass
 
 from dotenv import load_dotenv
+
 load_dotenv(_PROJECT_ROOT / ".env", override=True)
 
 # ---- 1. Monkey-patch: 替换 quant pick 和 LLM,让测试快速完成 ----
@@ -80,13 +81,15 @@ def _fake_prepare_quant_contexts(self, tickers, trade_date, progress_callback=No
 
 
 # 替换 quant pick 模块函数
-from tradingagents.quant import quant_picker as _qp_module
 from tradingagents.agents import quant_picker_node as _qpn_module
+from tradingagents.quant import quant_picker as _qp_module
+
 _qp_module.pick = _fake_quant_pick
 _qpn_module.quant_pick = _fake_quant_pick
 _qpn_module._extract_ticker_context = _fake_extract_ticker_context
 # quant_picker_node 导入的是 pick,替换其命名空间引用
 import tradingagents.agents.quant_picker_node as _qpn_ns
+
 _qpn_ns.quant_pick = _fake_quant_pick
 _qpn_ns._extract_ticker_context = _fake_extract_ticker_context
 
@@ -155,6 +158,7 @@ class FakeChatModel(BaseChatModel):
 
 # 替换 create_llm_client 返回 FakeChatModel
 from tradingagents.llm_clients import factory as _llm_factory
+
 _orig_create = _llm_factory.create_llm_client
 
 
@@ -169,21 +173,23 @@ _llm_factory.create_llm_client = _fake_create_llm_client
 # tradingagents.graph.trading_graph 是 from tradingagents.llm_clients import create_llm_client
 # 直接替换 llm_clients 模块属性
 import tradingagents.llm_clients as _llm_pkg
+
 _llm_pkg.create_llm_client = _fake_create_llm_client
 
 # LLM patch 完成后再 import TradingAgentsGraph,这样 trading_graph.py 顶层
 # from tradingagents.llm_clients import create_llm_client 拿到的是 fake 版本。
 # 同时 patch prepare_quant_contexts (被 _build_quant_contexts_for_batch 调用)。
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+
 TradingAgentsGraph.prepare_quant_contexts = _fake_prepare_quant_contexts
 
 
 # ---- 2. 运行 batch 流程 ----
 
 from tradingagents.default_config import DEFAULT_CONFIG
+from web.app_main import _build_quant_contexts_for_batch
 from web.progress import ProgressTracker
 from web.runner import run_analysis_in_thread
-from web.app_main import _build_quant_contexts_for_batch
 
 
 def _build_config() -> dict:
@@ -203,7 +209,7 @@ def _build_config() -> dict:
 
 def main() -> int:
     print("=== Batch 流程协同测试 ===")
-    print(f"mock quant_pick / LLM 已替换,流程应快速完成")
+    print("mock quant_pick / LLM 已替换,流程应快速完成")
     print()
 
     tickers = ["600881", "600095"]
@@ -212,7 +218,7 @@ def main() -> int:
 
     # 模拟 web/app_main.py 的 batch entry:先一次性构建 quant contexts,
     # 再分发给每只 ticker 的分析线程 (Bug 1 修复后的正确流程)
-    print(f"[step 1] 构建 quant contexts (一次调用,所有 ticker 共享)")
+    print("[step 1] 构建 quant contexts (一次调用,所有 ticker 共享)")
     quant_contexts = _build_quant_contexts_for_batch(tickers, trade_date, config)
     print(f"  -> 得到 {len(quant_contexts)} 个 context, "
           f"prepare_quant_contexts 被调用 {len(_PREPARE_CALLS)} 次")
@@ -263,14 +269,14 @@ def main() -> int:
     print()
     print("=== Bug 验证 ===")
     if len(_PREPARE_CALLS) == 1:
-        print(f"[OK] prepare_quant_contexts 只调用 1 次 (batch 一次构建所有 context)")
+        print("[OK] prepare_quant_contexts 只调用 1 次 (batch 一次构建所有 context)")
     else:
         print(f"[BUG] prepare_quant_contexts 调用 {len(_PREPARE_CALLS)} 次 "
               f"(应该 1 次)")
 
     if len(_PICK_CALLS) == 0:
-        print(f"[OK] LangGraph 节点层 quant_pick 未被调用 "
-              f"(pre_quant_context 注入成功,Quant Picker 节点是 no-op)")
+        print("[OK] LangGraph 节点层 quant_pick 未被调用 "
+              "(pre_quant_context 注入成功,Quant Picker 节点是 no-op)")
     else:
         print(f"[BUG 1 确认] LangGraph 节点仍调用了 quant_pick {len(_PICK_CALLS)} 次 "
               f"(pre_quant_context 注入失败)")

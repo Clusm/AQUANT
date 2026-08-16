@@ -32,15 +32,20 @@ except Exception:
     pass
 
 from dotenv import load_dotenv
+
 load_dotenv(_PROJECT_ROOT / ".env", override=True)
 
-from tradingagents.default_config import DEFAULT_CONFIG
-from tradingagents.llm_clients import create_llm_client
 from tradingagents.agents.schemas import (
-    PortfolioDecision, ResearchPlan, TraderProposal,
-    render_pm_decision, render_research_plan, render_trader_proposal,
+    PortfolioDecision,
+    ResearchPlan,
+    TraderProposal,
+    render_pm_decision,
+    render_research_plan,
+    render_trader_proposal,
 )
 from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext
+from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.llm_clients import create_llm_client
 
 
 def _make_llm(model: str):

@@ -1,14 +1,17 @@
-"""交易日历:基于 akshare 拉取历史交易日,本地缓存。"""
+"""交易日历:基于 akshare 拉取历史交易日,parquet 本地缓存。
+
+v0.4.0 起不再使用 pickle 缓存(避免反序列化任意对象的安全风险),
+改用 parquet + DataFrame 存取。
+"""
 from __future__ import annotations
 
-import pickle
 from datetime import date, datetime
 
 import pandas as pd
 
 from tradingagents.quant.config import CACHE_DIR
 
-_CALENDAR_FILE = CACHE_DIR / "trading_calendar.pkl"
+_CALENDAR_FILE = CACHE_DIR / "trading_calendar.parquet"
 _calendar_cache: pd.DatetimeIndex | None = None
 
 
@@ -20,19 +23,26 @@ def _fetch_calendar() -> pd.DatetimeIndex:
     return pd.DatetimeIndex(dates.sort_values())
 
 
+def _load_calendar() -> pd.DatetimeIndex:
+    dates = pd.read_parquet(_CALENDAR_FILE)["trade_date"]
+    return pd.DatetimeIndex(pd.to_datetime(dates).sort_values())
+
+
+def _save_calendar(cal: pd.DatetimeIndex) -> None:
+    pd.DataFrame({"trade_date": cal}).to_parquet(_CALENDAR_FILE, index=False)
+
+
 def get_calendar() -> pd.DatetimeIndex:
     global _calendar_cache
     if _calendar_cache is not None:
         return _calendar_cache
 
     if _CALENDAR_FILE.exists():
-        with open(_CALENDAR_FILE, "rb") as f:
-            _calendar_cache = pickle.load(f)
+        _calendar_cache = _load_calendar()
         return _calendar_cache
 
     cal = _fetch_calendar()
-    with open(_CALENDAR_FILE, "wb") as f:
-        pickle.dump(cal, f)
+    _save_calendar(cal)
     _calendar_cache = cal
     return cal
 

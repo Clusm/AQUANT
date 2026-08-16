@@ -1,6 +1,6 @@
 """每日 cron pipeline:量化选股 -> (可选)逐只 LLM 深度分析 -> 综合推荐落盘。
 
-默认模式(无 LLM,~3 分钟):
+默认模式(无 LLM,约 10-20 分钟,取决于缓存与 worker):
     py -3 scripts/daily_pipeline.py
     产出:outputs/daily/<YYYY-MM-DD>/
         ├── quant_picks.json         # 全量 Top N + 命中策略
@@ -245,9 +245,9 @@ def _build_daily_report(today: pd.Timestamp, quant_result: dict,
 def main() -> int:
     parser = argparse.ArgumentParser(description="每日 cron pipeline:量化选股 + (可选) LLM 深度分析")
     parser.add_argument("--today", default=None, help="选股日期 YYYY-MM-DD,默认今天")
-    parser.add_argument("--cache", default="daily_main_board_liquid", help="日线缓存文件名")
+    parser.add_argument("--cache", default="daily_main_board", help="日线缓存文件名")
     parser.add_argument("--top-k", type=int, default=2, help="每策略返回前 N 只")
-    parser.add_argument("--top-n", type=int, default=20, help="量化层 Top N")
+    parser.add_argument("--top-n", type=int, default=20, help="量化层 Top N(5/10/20)")
     parser.add_argument("--workers", type=int, default=8, help="量化层并行 worker 数")
     parser.add_argument("--slice-days", type=int, default=0, help="量化层切片天数")
     parser.add_argument("--no-progress", action="store_true", help="禁用进度回调")
@@ -262,7 +262,7 @@ def main() -> int:
 
     # M11: 未来日期校验
     today = pd.Timestamp(args.today) if args.today else pd.Timestamp.now().normalize()
-    if today > pd.Timestamp.now().normalize() + pd.Timedelta(days=1):
+    if today > pd.Timestamp.now().normalize() + pd.Timedelta(1, unit="D"):
         print(f"[error] --today {today.strftime('%Y-%m-%d')} 是未来日期,数据不存在", file=sys.stderr)
         return 4
 

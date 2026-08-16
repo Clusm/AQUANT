@@ -21,7 +21,6 @@ from web.stock_display import (
     strip_think_tags,
 )
 
-
 _REPORT_KEY_TO_STAGE = {s["report_key"]: s["id"] for s in PIPELINE_STAGES}
 
 _ANALYST_REPORT_KEYS = [
@@ -340,7 +339,8 @@ def _run_quant(
     """
     from tradingagents.quant.data import cache as cm
     from tradingagents.quant.data_update import (
-        check_cache_freshness, increment_data,
+        check_cache_freshness,
+        increment_data,
     )
     from tradingagents.quant.quant_picker import pick
     from web.background_fetcher import acquire_fetch_lock
@@ -448,7 +448,7 @@ def run_quant_pick_in_thread(
 
     Args:
         today: trade date (close-of-day)
-        daily_cache_name: e.g. "daily_main_board_liquid"
+        daily_cache_name: e.g. "daily_main_board"
         top_n: 5/10/20 (validated inside pick())
         n_workers: parallel workers (Windows spawn, slow startup)
         tracker: QuantProgressTracker instance (must be created by caller)

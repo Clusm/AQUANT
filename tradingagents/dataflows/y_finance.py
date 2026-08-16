@@ -1,9 +1,12 @@
-from typing import Annotated
 from datetime import datetime
-from dateutil.relativedelta import relativedelta
+from typing import Annotated
+
 import pandas as pd
 import yfinance as yf
-from .stockstats_utils import StockstatsUtils, yf_retry, load_ohlcv, filter_financials_by_date
+from dateutil.relativedelta import relativedelta
+
+from .stockstats_utils import StockstatsUtils, filter_financials_by_date, load_ohlcv, yf_retry
+
 
 def get_YFin_data_online(
     symbol: Annotated[str, "ticker symbol of the company"],

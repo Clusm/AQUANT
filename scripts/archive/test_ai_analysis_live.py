@@ -25,6 +25,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from dotenv import load_dotenv
+
 load_dotenv(_PROJECT_ROOT / ".env", override=True)
 
 os.environ.setdefault(
@@ -35,7 +36,6 @@ os.environ.setdefault(
 from tradingagents.default_config import DEFAULT_CONFIG
 from web.progress import PIPELINE_STAGES, ProgressTracker
 from web.runner import run_analysis_in_thread
-
 
 TICKER = "600881"
 TRADE_DATE = "2026-07-17"
@@ -61,7 +61,7 @@ def _build_config() -> dict:
 
 
 def main() -> int:
-    print(f"=== AI 分析实测 ===")
+    print("=== AI 分析实测 ===")
     print(f"ticker: {TICKER}, trade_date: {TRADE_DATE}")
     print(f"backend_url: {os.getenv('BACKEND_URL')}")
     print(f"DEEPSEEK_API_KEY last 4: {(os.getenv('DEEPSEEK_API_KEY') or '')[-4:]}")

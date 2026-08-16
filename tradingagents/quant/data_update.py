@@ -5,20 +5,30 @@
 """
 from __future__ import annotations
 
+import time
 from typing import Callable
 
 import pandas as pd
 
 from tradingagents.quant.data import cache as cm
 from tradingagents.quant.sina_fetcher import (
-    adaptive_datalen, fetch_bulk_incremental_sina, fetch_index_sina,
+    adaptive_datalen,
+    fetch_bulk_incremental_sina,
+    fetch_index_sina,
 )
 
 
-def check_cache_freshness(daily_df: pd.DataFrame) -> tuple[pd.Timestamp, int]:
-    """返回 (缓存最新交易日, 距今天数)。"""
+def check_cache_freshness(daily_df: pd.DataFrame,
+                          now: pd.Timestamp | None = None) -> tuple[pd.Timestamp, int]:
+    """返回 (缓存最新交易日, 距今天数)。now 可注入(测试确定性),默认当前时间。
+
+    空缓存:max() 为 NaT,直接 normalize 会抛 AttributeError;返回 (today, 极大
+    天数) 表示"没有数据、需要更新",让调用方走更新路径而非崩溃。
+    """
+    today = (now.normalize() if now is not None else pd.Timestamp.now()).normalize()
+    if len(daily_df) == 0:
+        return today, 10 ** 9
     last_date = pd.Timestamp(daily_df["trade_date"].max()).normalize()
-    today = pd.Timestamp.now().normalize()
     days_behind = (today - last_date).days
     return last_date, days_behind
 
@@ -53,7 +63,8 @@ def increment_data(daily_df: pd.DataFrame, idx_df: pd.DataFrame,
                    codes: list[str] | None = None,
                    progress_callback: Callable[[int, int, dict], None] | None = None,
                    stop_check: Callable[[], bool] | None = None,
-                   skip_inactive_days: int = 30
+                   skip_inactive_days: int = 30,
+                   now: pd.Timestamp | None = None
                    ) -> tuple[pd.DataFrame, pd.DataFrame, str]:
     """增量拉取最新交易日数据(sina K-line API)。
 
@@ -68,21 +79,27 @@ def increment_data(daily_df: pd.DataFrame, idx_df: pd.DataFrame,
         stop_check: 每批轮询的停止信号;返回 True 时尽快返回(已拉取部分会
             落盘,下次续跑),不再更新指数缓存。
         skip_inactive_days: 缓存里超过 N 天无成交的股票跳过(默认 30)
+        now: 当前时间(测试注入,默认 pd.Timestamp.now())
 
     Returns: (daily_df, idx_df, message)
     """
-    last_date, days_behind = check_cache_freshness(daily_df)
-    today = pd.Timestamp.now()
+    last_date, days_behind = check_cache_freshness(daily_df, now)
+    today = (now.normalize() if now is not None else pd.Timestamp.now()).normalize()
     is_weekend = today.weekday() >= 5
     if days_behind <= 0 or (is_weekend and days_behind <= 2):
         return daily_df, idx_df, f"缓存已最新({last_date.date()}),无需更新"
 
-    start = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-    end = pd.Timestamp.now().strftime("%Y-%m-%d")
+    # 空缓存:无"最后交易日"可延展,增量无从谈起;直接返回清晰提示,
+    # 避免 last_date=NaT 在下方 strftime 抛晦涩的 ValueError
+    if len(daily_df) == 0:
+        return daily_df, idx_df, "缓存为空,无法增量更新。请先运行全量构建(download_all)初始化数据。"
+
+    start = (last_date + pd.Timedelta(1, unit="D")).strftime("%Y-%m-%d")
+    end = today.strftime("%Y-%m-%d")
     all_codes = daily_df["stock_code"].astype(str).unique().tolist()
 
     # 过滤疑似退市/长期停牌:缓存里最近 skip_inactive_days 天无成交的股票跳过
-    active_cutoff = last_date - pd.Timedelta(days=skip_inactive_days)
+    active_cutoff = last_date - pd.Timedelta(skip_inactive_days, unit="D")
     recent_active = daily_df[daily_df["trade_date"] >= active_cutoff]["stock_code"].astype(str).unique()
     active_set = set(recent_active)
     inactive_skipped = len(all_codes) - len(active_set)
@@ -135,7 +152,7 @@ def increment_data(daily_df: pd.DataFrame, idx_df: pd.DataFrame,
         new_idx = fetch_index_sina("sh000001", datalen=idx_datalen)
         if len(new_idx) > 0:
             new_idx["trade_date"] = pd.to_datetime(new_idx["trade_date"]).dt.normalize()
-            new_idx = new_idx[new_idx["trade_date"] > last_date]
+            new_idx = new_idx[new_idx["trade_date"] > last_date].copy()
             if len(new_idx) > 0:
                 new_idx["amount"] = new_idx["volume"] * (
                     new_idx["open"] + new_idx["high"] + new_idx["low"] + new_idx["close"]) / 4
@@ -148,13 +165,102 @@ def increment_data(daily_df: pd.DataFrame, idx_df: pd.DataFrame,
     return daily_df, idx_df, "\n  ".join(msg_lines)
 
 
-def get_cache_status(daily_df: pd.DataFrame) -> dict:
-    """返回缓存状态摘要(用于 UI 显示)。"""
-    last_date, days_behind = check_cache_freshness(daily_df)
+def _stale_codes(daily_df: pd.DataFrame, target: pd.Timestamp | None = None) -> list[str]:
+    """返回最后交易日 < target(默认全局 max)的股票代码列表(落后股票)。"""
+    if target is None:
+        target = pd.Timestamp(daily_df["trade_date"].max()).normalize()
+    last = daily_df.groupby("stock_code")["trade_date"].max()
+    return [str(c) for c, lst in last.items() if lst < target]
+
+
+def backfill_stale(
+    daily_df: pd.DataFrame,
+    cache_name: str,
+    *,
+    window_days: int = 7,
+    chunk_size: int = 180,
+    cooldown: float = 0.0,
+    max_workers: int = 16,
+    probe: Callable[[], bool] | None = None,
+    fetch_batch: Callable[..., tuple[pd.DataFrame, list[str]]] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    progress_callback: Callable[[int, int, dict], None] | None = None,
+    stop_check: Callable[[], bool] | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    """回补落后股票(最后交易日 < 全局最新日)到最新交易日。
+
+    设计:increment_data 的 freshness gate 按全局 max 判定,单股落后不会被
+    增量路径补上,回补是增量更新的必要补充。此函数把回补内聚为共享实现
+    (此前散落在 incremental_update / backfill_main_board 两处,一处单突发
+    456 风险),分块 + 探测冷却 + 每块即时落盘,中断可续跑。
+
+    依赖注入使函数可离线测试:
+      - fetch_batch: 单批拉取(默认 sina_fetcher.fetch_bulk_incremental_sina)
+      - probe: 端点可用性探测;返回 False 时按 cooldown 冷却等待
+      - sleep: 冷却实现(测试注入 noop)
+      - stop_check: 停止信号(与 increment_data 同契约)
+
+    Returns:
+        (merged_df, remaining_stale) — merged 为已落盘的合并缓存 DataFrame;
+        remaining_stale 非空表示被中断(456 或 stop),可据此续跑。
+    """
+    target = pd.Timestamp(daily_df["trade_date"].max()).normalize()
+    stale = _stale_codes(daily_df, target)
+    total = len(stale)
+    if total == 0:
+        return daily_df, []
+
+    if fetch_batch is None:
+        fetch_batch = fetch_bulk_incremental_sina
+
+    start = (target - pd.Timedelta(window_days - 1, unit="D")).strftime("%Y-%m-%d")
+    end = target.strftime("%Y-%m-%d")
+    shares_map = _get_last_shares_map(daily_df)
+    close_map = _get_last_close_map(daily_df)
+
+    while stale:
+        if stop_check is not None and stop_check():
+            break
+        if probe is not None:
+            while not probe():
+                sleep(cooldown)
+        chunk = stale[:chunk_size]
+        inc_df, failed = fetch_batch(
+            chunk, start, end,
+            last_shares_map=shares_map,
+            last_close_map=close_map,
+            max_workers=max_workers,
+            stop_check=stop_check,
+        )
+        if len(inc_df) > 0:
+            daily_df = cm.update(cache_name, inc_df, on=["stock_code", "trade_date"])
+        # 只对本次 chunk 更新过的代码重判是否追平,避免每块对全量缓存反复
+        # groupby(缓存几百万行时,块数 × 全量 groupby 会浪费数秒)
+        chunk_set = set(chunk)
+        last_by_code = daily_df[
+            daily_df["stock_code"].isin(chunk_set)
+        ].groupby("stock_code")["trade_date"].max()
+        stale = [c for c in stale if c not in last_by_code.index or last_by_code[c] < target]
+        if progress_callback is not None:
+            progress_callback(total - len(stale), total, {
+                "remaining": len(stale),
+                "failed": len(failed),
+            })
+        if stale:
+            sleep(cooldown)
+
+    return daily_df, stale
+
+
+def get_cache_status(daily_df: pd.DataFrame,
+                     now: pd.Timestamp | None = None) -> dict:
+    """返回缓存状态摘要(用于 UI 显示)。now 可注入(测试确定性)。"""
+    last_date, days_behind = check_cache_freshness(daily_df, now)
+    today = (now.normalize() if now is not None else pd.Timestamp.now()).normalize()
     return {
         "last_date": last_date,
         "days_behind": days_behind,
         "n_rows": len(daily_df),
         "n_stocks": int(daily_df["stock_code"].nunique()) if len(daily_df) > 0 else 0,
-        "needs_update": days_behind > 0 and not (pd.Timestamp.now().weekday() >= 5 and days_behind <= 2),
+        "needs_update": days_behind > 0 and not (today.weekday() >= 5 and days_behind <= 2),
     }

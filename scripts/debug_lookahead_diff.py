@@ -19,7 +19,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from tradingagents.quant.data import cache as cm
 from tradingagents.quant.features.pipeline import (
-    get_weekly_bars, merge_asof_weekly,
+    get_weekly_bars,
+    merge_asof_weekly,
 )
 
 
@@ -41,17 +42,17 @@ def main() -> int:
 
     # 看这 4 只股票 07-20 当天的日线
     day = sub[sub["trade_date"] == test_date][["stock_code", "trade_date", "open", "close", "high", "low", "volume"]]
-    print(f"\n07-20 当天日线:")
+    print("\n07-20 当天日线:")
     print(day.to_string(index=False))
 
     # 看这 4 只股票 07-13~07-24 的日线(看本周和上周)
-    print(f"\n07-13~07-21 日线(看本周和上周):")
+    print("\n07-13~07-21 日线(看本周和上周):")
     recent = sub[(sub["trade_date"] >= "2026-07-13") & (sub["trade_date"] <= "2026-07-21")]
     print(recent[["stock_code", "trade_date", "open", "close", "high", "low", "volume"]].to_string(index=False))
 
     # 用 get_weekly_bars 获取周线
     weekly = get_weekly_bars(sub)
-    print(f"\n周线 bars(4 只股票):")
+    print("\n周线 bars(4 只股票):")
     print(weekly[["stock_code", "week_key", "week_date", "week_close", "wma5", "wma10",
                   "weekly_above_ma5", "weekly_bullish", "wmacd", "wsignal", "wmacd_gc_recent"]].to_string(index=False))
 
@@ -83,11 +84,11 @@ def main() -> int:
                 "wrsi_14"]]
     )
 
-    print(f"\n方式 A(week_key 精确匹配,修复前,有 look-ahead):")
+    print("\n方式 A(week_key 精确匹配,修复前,有 look-ahead):")
     print(merged_a[["stock_code", "trade_date", "week_key", "week_date", "week_close",
                     "wma5", "weekly_bullish", "wmacd_gc_recent", "wrsi_14"]].to_string(index=False))
 
-    print(f"\n方式 B(merge_asof backward,修复后,无 look-ahead):")
+    print("\n方式 B(merge_asof backward,修复后,无 look-ahead):")
     print(merged_b[["stock_code", "trade_date", "week_date", "week_close",
                     "wma5", "weekly_bullish", "wmacd_gc_recent", "wrsi_14"]].to_string(index=False))
 

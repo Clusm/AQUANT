@@ -93,7 +93,7 @@ def _extract_ticker_context(result: dict, ticker: str) -> str:
             if desc:
                 lines.append(f"    策略逻辑: {desc}")
             if logic:
-                lines.append(f"    策略思路: {logic}")
+                lines.append(f"    回测口径: {logic}")
             reason = r.get("reason", "")
             if reason:
                 lines.append(f"    触发原因: {reason}")
@@ -174,8 +174,8 @@ def create_quant_picker_node(config: dict | None = None) -> Callable[[Any], dict
         # === Shared: try to load saved quant pick JSON ===
         saved_result = None
         try:
-            from pathlib import Path
             import json as _json
+            from pathlib import Path
             saved_path = Path.home() / ".tradingagents" / "quant_picks" / f"{trade_date}.json"
             if saved_path.exists():
                 with open(saved_path, encoding="utf-8") as f:
@@ -239,7 +239,7 @@ def create_quant_picker_node(config: dict | None = None) -> Callable[[Any], dict
             today = pd.Timestamp(trade_date)
             result = quant_pick(
                 today=today,
-                daily_cache_name=cfg.get("quant_daily_cache_name", "daily_main_board_liquid"),
+                daily_cache_name=cfg.get("quant_daily_cache_name", "daily_main_board"),
                 top_k=cfg.get("quant_top_k_per_strategy", 2),
                 n_workers=cfg.get("quant_n_workers", 8),
                 slice_days=cfg.get("quant_slice_days", 0),

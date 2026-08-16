@@ -14,22 +14,21 @@ Data sources:
 
 from __future__ import annotations
 
-from typing import Annotated
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
 import json as _json
-import os
 import logging
 import math
+import os
 import random
 import re as _re
 import socket
 import time
 import uuid
-import urllib.request
+from datetime import datetime
+from typing import Annotated
 
 import pandas as pd
 import requests as _requests
+from dateutil.relativedelta import relativedelta
 
 from .utils import safe_ticker_component
 
@@ -209,6 +208,7 @@ def _get_mootdx_client():
         return _mootdx_client
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from mootdx.quotes import Quotes
 
     # 并行探测所有 TDX 服务器，取第一个可达的
@@ -249,10 +249,9 @@ def _tencent_quote(codes: list[str]) -> dict[str, dict]:
     """
     prefixed = [f"{_get_prefix(c)}{c}" for c in codes]
     url = "https://qt.gtimg.cn/q=" + ",".join(prefixed)
-    req = urllib.request.Request(url)
-    req.add_header("User-Agent", "Mozilla/5.0")
-    resp = urllib.request.urlopen(req, timeout=10)
-    raw = resp.read().decode("gbk")
+    resp = _requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    resp.raise_for_status()
+    raw = resp.content.decode("gbk")
 
     result = {}
     for line in raw.strip().split(";"):
@@ -391,7 +390,7 @@ def _sina_kline_fallback(code: str, start_date: str = None, end_date: str = None
     """
     prefix = "sh" if code.startswith("6") else "sz"
     url = (
-        "http://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+        "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
         "CN_MarketData.getKLineData"
     )
     params = {
@@ -555,8 +554,8 @@ def _load_ohlcv_astock(symbol: str, curr_date: str) -> pd.DataFrame:
             df = _sina_kline_fallback(code)
             if df.empty:
                 raise ValueError(f"No OHLCV data from sina for {code}")
-        except Exception:
-            raise ValueError(f"No OHLCV data from mootdx/sina for {code}")
+        except Exception as exc:
+            raise ValueError(f"No OHLCV data from mootdx/sina for {code}") from exc
 
     df, _ = _supplement_stale_ohlcv_with_sina(code, df, curr_date, start_date=None)
 
@@ -825,6 +824,38 @@ def get_fundamentals(
         except Exception as e:
             logger.warning("eastmoney push2 stock info failed for %s: %s", code, e)
 
+        # --- Eastmoney datacenter: top 10 shareholders ---
+        try:
+            holders = _eastmoney_datacenter(
+                "RPT_F10_EH_HOLDERS",
+                filter_str=f'(SECURITY_CODE="{code}")',
+                page_size=10,
+                sort_columns="END_DATE",
+                sort_types="-1",
+            )
+            if holders:
+                lines.append(chr(10) + "--- Top 10 Shareholders (Eastmoney) ---")
+                lines.append("Rank | 截止日 | 股东 | 持股数 | 持股比例 | 变动")
+                holders_sorted = sorted(
+                    holders,
+                    key=lambda row: int(row.get("HOLDER_RANK") or 999),
+                )
+                for row in holders_sorted[:10]:
+                    rank = row.get("HOLDER_RANK", "")
+                    end_date = str(row.get("END_DATE", ""))[:10]
+                    name = row.get("HOLDER_NAME", "")
+                    hold_num = row.get("HOLD_NUM", "")
+                    ratio = row.get("HOLD_NUM_RATIO", "")
+                    change = row.get("HOLD_NUM_CHANGE", "")
+                    change_ratio = row.get("CHANGE_RATIO")
+                    change_ratio_text = "--" if change_ratio is None else f"{change_ratio}%"
+                    lines.append(
+                        f"  {rank} | {end_date} | {name} | {hold_num} | {ratio}% | "
+                        f"{change} ({change_ratio_text})"
+                    )
+        except Exception as e:
+            logger.warning("Top10 shareholders failed for %s: %s", code, e)
+
         # --- 同花顺 direct HTTP: consensus EPS forecast ---
         try:
             forecast_df = _ths_eps_forecast(code)
@@ -914,6 +945,50 @@ def get_fundamentals(
 # ---- 4. get_balance_sheet ----
 
 
+
+_FIN_REPORT_EM = {
+    "资产负债表": "RPT_DMSK_FN_BALANCE",
+    "利润表": "RPT_DMSK_FN_INCOME",
+    "现金流量表": "RPT_DMSK_FN_CASHFLOW",
+}
+
+
+def _get_financial_report_em(code: str, report_type: str, freq: str,
+                            curr_date: str | None = None) -> pd.DataFrame:
+    """Eastmoney datacenter financial-report fallback (Sina API often returns empty)."""
+    report_name = _FIN_REPORT_EM.get(report_type)
+    if not report_name:
+        return pd.DataFrame()
+    url = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+    params = {
+        "reportName": report_name,
+        "columns": "ALL",
+        "filter": f'(SECURITY_CODE="{code}")',
+        "pageNumber": 1, "pageSize": 8,
+        "sortTypes": "-1", "sortColumns": "REPORT_DATE",
+        "source": "HSF10", "client": "PC",
+    }
+    try:
+        r = _em_get(url, params=params, timeout=15)
+        data = r.json()
+        rows = (data.get("result") or {}).get("data") or []
+    except Exception:
+        return pd.DataFrame()
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    if "REPORT_DATE" not in df.columns:
+        return df.head(8)
+    df["报告日"] = pd.to_datetime(df["REPORT_DATE"])
+    if "NOTICE_DATE" in df.columns:
+        df["发布日"] = df["NOTICE_DATE"]
+    df = df.sort_values("报告日", ascending=False)
+    if curr_date:
+        cutoff = pd.to_datetime(curr_date)
+        df = df[df["报告日"] <= cutoff]
+    if str(freq).lower() == "annual":
+        df = df[df["报告日"].dt.month == 12]
+    return df.head(8)
 def _get_financial_report_sina(
     code: str, report_type: str, freq: str, curr_date: str = None,
 ) -> pd.DataFrame:
@@ -1007,14 +1082,18 @@ def get_balance_sheet(
 
     try:
         df = _get_financial_report_sina(code, "资产负债表", freq, curr_date)
+        source = "sina direct HTTP"
+        if df.empty:
+            df = _get_financial_report_em(code, "资产负债表", freq, curr_date)
+            source = "eastmoney datacenter (fallback)"
 
         if df.empty:
             return f"No balance sheet data found for A-stock '{code}'"
 
         csv_string = df.to_csv(index=False)
 
-        header = f"# Balance Sheet for {code} (A-stock, {freq})\n"
-        header += "# Data source: sina direct HTTP\n"
+        header = f"# Balance Sheet for {code} (A-stock, {freq})" + chr(10)
+        header += f"# Data source: {source}" + chr(10)
         header += (
             f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         )
@@ -1038,14 +1117,18 @@ def get_cashflow(
 
     try:
         df = _get_financial_report_sina(code, "现金流量表", freq, curr_date)
+        source = "sina direct HTTP"
+        if df.empty:
+            df = _get_financial_report_em(code, "现金流量表", freq, curr_date)
+            source = "eastmoney datacenter (fallback)"
 
         if df.empty:
             return f"No cash flow data found for A-stock '{code}'"
 
         csv_string = df.to_csv(index=False)
 
-        header = f"# Cash Flow for {code} (A-stock, {freq})\n"
-        header += "# Data source: sina direct HTTP\n"
+        header = f"# Cash Flow for {code} (A-stock, {freq})" + chr(10)
+        header += f"# Data source: {source}" + chr(10)
         header += (
             f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         )
@@ -1069,14 +1152,18 @@ def get_income_statement(
 
     try:
         df = _get_financial_report_sina(code, "利润表", freq, curr_date)
+        source = "sina direct HTTP"
+        if df.empty:
+            df = _get_financial_report_em(code, "利润表", freq, curr_date)
+            source = "eastmoney datacenter (fallback)"
 
         if df.empty:
             return f"No income statement data found for A-stock '{code}'"
 
         csv_string = df.to_csv(index=False)
 
-        header = f"# Income Statement for {code} (A-stock, {freq})\n"
-        header += "# Data source: sina direct HTTP\n"
+        header = f"# Income Statement for {code} (A-stock, {freq})" + chr(10)
+        header += f"# Data source: {source}" + chr(10)
         header += (
             f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         )
@@ -1360,9 +1447,20 @@ def get_insider_transactions(
 
     try:
         client = _get_mootdx_client()
-        text = client.F10(symbol=code, name="股东研究")
+        raw = client.F10(symbol=code, name="股东研究")
 
-        if not text or not text.strip():
+        # mootdx F10 may return a dict {"最新提示": ...} instead of str.
+        # Normalize it, otherwise .strip() raises 'dict' object has no attribute
+        # and get_insider_transactions fails for every ticker.
+        if isinstance(raw, dict):
+            parts = [str(value) for value in raw.values() if value]
+            text = chr(10).join(parts)
+        elif isinstance(raw, (list, tuple)):
+            text = chr(10).join(str(value) for value in raw)
+        else:
+            text = str(raw or "")
+
+        if not text.strip():
             return f"No insider/shareholder data found for A-stock '{code}'"
 
         header = f"# Shareholder Research for {code} (A-stock)\n"
@@ -1412,7 +1510,7 @@ def get_profit_forecast(
 
         lines = [
             f"# Consensus EPS Forecast for {code} (A-stock)",
-            f"# Source: 同花顺 analyst consensus (direct HTTP)",
+            "# Source: 同花顺 analyst consensus (direct HTTP)",
             f"# Retrieved: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
         ]
@@ -1505,7 +1603,7 @@ def get_hot_stocks(
 
     try:
         url = (
-            f"http://zx.10jqka.com.cn/event/api/getharden/"
+            f"https://zx.10jqka.com.cn/event/api/getharden/"
             f"date/{curr_date}/orderby/date/orderway/desc/charset/GBK/"
         )
         headers = {
@@ -1529,7 +1627,7 @@ def get_hot_stocks(
 
         lines = [
             f"# Hot Stocks with Topic Attribution ({curr_date})",
-            f"# Source: 同花顺 editorial (human-curated reason tags)",
+            "# Source: 同花顺 editorial (human-curated reason tags)",
             f"# Total: {len(rows)} stocks",
             "",
         ]
@@ -1559,7 +1657,7 @@ def get_hot_stocks(
 
         if all_tags:
             cnt = Counter(all_tags)
-            lines.append(f"\n## Theme Frequency (top 15)")
+            lines.append("\n## Theme Frequency (top 15)")
             for tag, n in cnt.most_common(15):
                 lines.append(f"  {tag}: {n} stocks")
 
@@ -1781,7 +1879,7 @@ def get_concept_blocks(
 
         lines = [
             f"# Concept & Sector Blocks for {code} (A-stock)",
-            f"# Source: 百度股市通 (Baidu PAE)",
+            "# Source: 百度股市通 (Baidu PAE)",
             f"# Retrieved: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
         ]
@@ -1815,6 +1913,39 @@ def get_concept_blocks(
 # ---- 14. get_fund_flow ----
 
 
+
+def _get_fund_flow_sina(code: str, days: int = 20) -> list[str]:
+    """Sina MoneyFlow fallback used when Eastmoney push2 is blocked."""
+    prefix = "sh" if code.startswith("6") else "sz"
+    url = (
+        "https://vip.stock.finance.sina.com.cn/quotes_service/"
+        "api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs"
+    )
+    params = {
+        "page": 1, "num": days, "sort": "opendate", "asc": 0,
+        "daima": f"{prefix}{code}",
+    }
+    try:
+        r = _requests.get(url, params=params, headers={"User-Agent": _UA}, timeout=12)
+        rows = r.json()
+    except Exception:
+        return []
+    if not isinstance(rows, list) or not rows:
+        return []
+    out = ["## Sina Daily Fund Flow (fallback)", "Date | 主力净流入(万) | 净流入占比"]
+    for row in rows[:days]:
+        try:
+            trade_date = str(row.get("opendate", ""))[:10]
+            net = float(row.get("netamount", 0)) / 1e4
+            ratio = float(row.get("ratioamount", 0)) * 100
+        except (TypeError, ValueError):
+            continue
+        out.append(f"  {trade_date} | {net:.0f} | {ratio:.2f}%")
+    if len(out) > 2:
+        net_last = float(rows[0].get("netamount", 0) or 0) / 1e4
+        out.append(f"Close: 主力净流入={net_last:.0f}万元")
+        out.append("Signal: Net main force INFLOW (bullish)" if net_last > 0 else "Signal: Net main force OUTFLOW (bearish)")
+    return out
 def get_fund_flow(
     ticker: Annotated[str, "A-stock code"],
     curr_date: Annotated[str, "Date YYYY-MM-DD"],
@@ -1834,7 +1965,7 @@ def get_fund_flow(
     secid = f"1.{code}" if code.startswith("6") else f"0.{code}"
     lines = [
         f"# Fund Flow for {code} (A-stock)",
-        f"# Source: 东财 push2 (Eastmoney)",
+        "# Source: 东财 push2 (Eastmoney)",
         f"# Retrieved: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "",
     ]
@@ -1924,6 +2055,11 @@ def get_fund_flow(
         return "\n".join(lines)
 
     except Exception as e:
+        fallback = _get_fund_flow_sina(code)
+        if fallback:
+            lines.append("")
+            lines.extend(fallback)
+            return chr(10).join(lines)
         return f"Error fetching fund flow for {code}: {str(e)}"
 
 
@@ -1949,7 +2085,7 @@ def get_dragon_tiger_board(
     """
     code = safe_ticker_component(ticker)
     end_dt = datetime.strptime(trade_date, "%Y-%m-%d")
-    start_dt = end_dt - pd.Timedelta(days=look_back_days)
+    start_dt = end_dt - pd.Timedelta(look_back_days, unit="D")
     start_date_str = start_dt.strftime("%Y-%m-%d")
     lines = [f"# 龙虎榜数据 | {code} | {trade_date} (近{look_back_days}日)"]
 
@@ -2140,6 +2276,43 @@ def get_lockup_expiry(
 # 17. Industry Comparison (行业横向对比)
 # ---------------------------------------------------------------------------
 
+
+def _get_industry_comparison_sina(top_n: int = 20) -> list[str]:
+    """Sina industry board fallback when Eastmoney clist is blocked."""
+    url = "https://vip.stock.finance.sina.com.cn/q/view/newSinaHy.php"
+    try:
+        r = _requests.get(url, headers={"User-Agent": _UA}, timeout=12)
+        match = _re.search(r"\{.*\}", r.text, flags=_re.S)
+        if not match:
+            return []
+        data = _json.loads(match.group(0))
+    except Exception:
+        return []
+    rows = []
+    for value in data.values():
+        parts = str(value).split(",")
+        if len(parts) < 13:
+            continue
+        try:
+            change_pct = float(parts[5])
+            amount = float(parts[7]) / 1e8
+            rows.append({
+                "name": parts[1], "count": parts[2], "change_pct": change_pct,
+                "amount": amount, "leader": parts[12],
+            })
+        except (TypeError, ValueError, IndexError):
+            continue
+    if not rows:
+        return []
+    rows.sort(key=lambda item: item["change_pct"], reverse=True)
+    out = ["## Sina Industry Board Ranking (fallback)", "Rank | 行业 | 涨跌幅 | 成交额(亿) | 领涨股"]
+    for i, item in enumerate(rows):
+        if i >= top_n and i < len(rows) - top_n:
+            if i == top_n:
+                out.append("  ...")
+            continue
+        out.append(f"  {i + 1}. {item['name']} | {item['change_pct']:.2f}% | {item['amount']:.1f} | {item['leader']}")
+    return out
 def get_industry_comparison(
     ticker: str,
     trade_date: str,
@@ -2202,6 +2375,11 @@ def get_industry_comparison(
         else:
             lines.append("行业数据获取为空。")
     except Exception as e:
-        lines.append(f"行业对比查询失败: {e}")
+        fallback = _get_industry_comparison_sina(top_n)
+        if fallback:
+            lines.append(f"东财行业接口失败({e})，已切换新浪备用源")
+            lines.extend(fallback)
+        else:
+            lines.append(f"行业对比查询失败: {e}")
 
     return "\n".join(lines)

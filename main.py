@@ -1,31 +1,38 @@
-from tradingagents.graph.trading_graph import TradingAgentsGraph
-from tradingagents.default_config import DEFAULT_CONFIG
+"""Aquant 投研工具 - 最简快速启动示例。
+
+先创建 .env 并填入 DeepSeek key(或改用其他 provider),然后运行:
+    python main.py
+
+默认手动输入股票代码,量化层不会启动全市场扫描(与 Web UI 的"手动选股"
+策略一致);如需量化前置筛选请使用 Web UI 的「开始选股」或 CLI:
+    tradingagents quant-pick
+"""
+
+from datetime import date, timedelta
 
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.graph.trading_graph import TradingAgentsGraph
+
 load_dotenv()
 
-# Create a custom config
 config = DEFAULT_CONFIG.copy()
-config["deep_think_llm"] = "gpt-5.4-mini"  # Use a different model
-config["quick_think_llm"] = "gpt-5.4-mini"  # Use a different model
-config["max_debate_rounds"] = 1  # Increase debate rounds
+config["llm_provider"] = "deepseek"
+config["deep_think_llm"] = "deepseek-v4-pro"
+config["quick_think_llm"] = "deepseek-v4-flash"
+config["checkpoint_enabled"] = True
+config["max_debate_rounds"] = 1
+config["max_risk_discuss_rounds"] = 1
+config["output_language"] = "Chinese"
 
-# Configure data vendors (default uses yfinance, no extra API keys needed)
-config["data_vendors"] = {
-    "core_stock_apis": "yfinance",           # Options: alpha_vantage, yfinance
-    "technical_indicators": "yfinance",      # Options: alpha_vantage, yfinance
-    "fundamental_data": "yfinance",          # Options: alpha_vantage, yfinance
-    "news_data": "yfinance",                 # Options: alpha_vantage, yfinance
-}
-
-# Initialize with custom config
+# A 股默认数据源已在 DEFAULT_CONFIG 中配置为 a_stock,无需再改 data_vendors。
 ta = TradingAgentsGraph(debug=True, config=config)
 
-# forward propagate
-_, decision = ta.propagate("NVDA", "2024-05-10")
+# 使用最近一个工作日(简单跳过周末,法定假期可手工改日期)。
+trade_date = date.today()
+while trade_date.weekday() >= 5:
+    trade_date -= timedelta(days=1)
+trade_date = trade_date.strftime("%Y-%m-%d")
+final_state, decision = ta.propagate("600519", trade_date)
 print(decision)
-
-# Memorize mistakes and reflect
-# ta.reflect_and_remember(1000) # parameter is the position returns

@@ -341,8 +341,10 @@ def fetch_top_liquid_stocks(percentile: float = 0.8) -> list[str]:
     """从当前快照中选取流动性 top N 的主板股票(按 percentile 截断)。
 
     percentile=0.8 表示保留主板股票中流动性前 80%(~2433 股)。
-    数据采集层做这次截断后,策略运行层 filter_universe_topk 不需要再做
-    quant_liquidity_percentile 过滤(default_config 已设为 1.0)。
+    这里只用于构造 daily_main_board_liquid 数据采集层缓存。
+
+    v0.4.0 生产选股路径默认使用 daily_main_board 全量主板,top18 策略
+    显式传 universe_topk=300/500(比 80% 更严格),不使用本函数/本参数。
 
     注意:这是当前时点的快照,有幸存者偏差。回测时应用 universe.filter_universe_topk
     每月动态过滤,基于历史成交额排序。

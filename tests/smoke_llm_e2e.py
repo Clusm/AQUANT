@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 # 加载 .env
 from dotenv import load_dotenv
+
 load_dotenv(ROOT / ".env")
 
 # 在 import graph 之前禁用 quant 层(冒烟测试不需要预过滤)
@@ -72,7 +73,7 @@ def main():
     if final_state and final_state.get("market_report"):
         report = final_state["market_report"]
         print(f"[smoke] market_report 长度: {len(report)} 字符")
-        print(f"[smoke] 前 500 字符预览:")
+        print("[smoke] 前 500 字符预览:")
         print("-" * 60)
         print(report[:500])
         print("-" * 60)

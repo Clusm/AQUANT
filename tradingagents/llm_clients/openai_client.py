@@ -69,7 +69,7 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
         outgoing = payload.get("messages", [])
-        for message_dict, message in zip(outgoing, _input_to_messages(input_)):
+        for message_dict, message in zip(outgoing, _input_to_messages(input_), strict=False):
             if not isinstance(message, AIMessage):
                 continue
             reasoning = message.additional_kwargs.get("reasoning_content")
@@ -87,7 +87,7 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
             )
         )
         for generation, choice in zip(
-            chat_result.generations, response_dict.get("choices", [])
+            chat_result.generations, response_dict.get("choices", []), strict=False
         ):
             reasoning = choice.get("message", {}).get("reasoning_content")
             if reasoning is not None:
@@ -173,6 +173,20 @@ class OpenAIClient(BaseLLMClient):
         for key in _PASSTHROUGH_KWARGS:
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
+
+        # HTTP headers/URLs must be ASCII. A pasted key with Chinese characters
+        # or invisible spaces surfaces as the cryptic httpx error:
+        #   'ascii' codec can't encode characters ...
+        # Fail here with an actionable message instead.
+        if self.base_url and not self.base_url.isascii():
+            raise RuntimeError(
+                "模型网关地址包含非 ASCII 字符,请检查是否粘贴了中文或空格。"
+            )
+        api_key = llm_kwargs.get("api_key")
+        if isinstance(api_key, str) and api_key and not api_key.isascii():
+            raise RuntimeError(
+                "API Key 包含非 ASCII 字符(中文/空格等),请重新粘贴完整 key。"
+            )
 
         # Native OpenAI: use Responses API for consistent behavior across
         # all model families. Third-party providers use Chat Completions.

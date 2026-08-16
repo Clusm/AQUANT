@@ -150,7 +150,7 @@ class SectorRotationStrategy(BaseStrategy):
                              (self.industry_ma_mid, "ind_ma_m"),
                              (self.industry_ma_long, "ind_ma_l")]:
             ind_daily[name] = ind_daily.groupby("industry")["ind_nav"].transform(
-                lambda s: s.rolling(window, min_periods=window // 2).mean()
+                lambda s, window=window: s.rolling(window, min_periods=window // 2).mean()
             )
         # 行业近 N 日涨幅
         ind_daily["ind_ret_recent"] = ind_daily.groupby("industry")["ind_nav"].pct_change(

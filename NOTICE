@@ -17,7 +17,8 @@ Modifications in this fork include:
 - A-stock trading constraints (T+1, price limits, lot sizes) in Trader and PM
 - Chinese language output support
 - CSI 300 benchmark for alpha calculation (replacing SPY)
-- v0.3.0: Quant pre-filter layer (tradingagents/quant/, 46 strategies, multiprocessing.Pool)
+- v0.3.0: Quant pre-filter layer introduced (tradingagents/quant/, multiprocessing.Pool)
+- v0.4.0: top18 final strategy library (S=5/A=11/B=2, OOS 2025-01-01~2026-07-14), unified dark web theme, and buy-plan / position-tracking / trade-record workflow (7-tab Web UI)
 - v0.3.0: LangGraph topology extension (Quant Picker -> 7 Analyst -> ... -> Conflict Resolver)
 - v0.3.0: Web UI 4-tab workflow (量化选股 / AI 深度分析 / 综合推荐 / 历史)
 - v0.3.0: Conflict Resolver node (rule-based, 🟢强买/🟡关注/🟠冲突/🔴弃 4-tier labels)

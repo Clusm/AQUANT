@@ -4,7 +4,7 @@
   本项目基于两个上游项目改造而成:<br>
   <a href="https://github.com/TauricResearch/TradingAgents">TauricResearch/TradingAgents</a>(65K ⭐ 原版多 Agent 框架)<br>
   → <a href="https://github.com/simonlin1212/TradingAgents-astock">simonlin1212/TradingAgents-astock</a>(A 股深度特化 fork,v0.2.18)<br>
-  → <b>TradingAgents-quant</b>(v0.3.0,加量化前置筛选层)
+  → <b>TradingAgents-quant</b>(v0.4.0,加量化前置筛选层)
 </p>
 
 <p align="center">
@@ -65,10 +65,10 @@ simonlin1212/TradingAgents-astock (A 股深度特化)
        │
        ↓ 2026-07-18 加量化层
        │
-TradingAgents-quant (v0.3.0,本项目)
+TradingAgents-quant (v0.4.0,本项目)
   ├─ 新增量化前置筛选层(tradingagents/quant/)
   ├─ LangGraph 拓扑扩展:START -> Quant Picker -> ... -> Conflict Resolver -> END
-  ├─ Web UI 4-tab 重构(量化选股 / AI 深度分析 / 综合推荐 / 历史)
+  ├─ Web UI 7-tab 重构(量化选股 / AI 深度分析 / 买入计划 / 持仓跟踪 / 交易记录 / 综合推荐 / 历史)
   ├─ CLI 加 quant-pick 子命令 + daily_pipeline 脚本
   ├─ Conflict Resolver 节点(纯规则,🟢强买/🟡关注/🟠冲突/🔴弃)
   └─ 默认 LLM 改 DeepSeek(quick=Flash / deep=Pro)
@@ -108,16 +108,16 @@ TradingAgents-quant (v0.3.0,本项目)
 
 ---
 
-## 量化前置筛选层(v0.3.0 新增)
+## 量化前置筛选层(v0.3.0 新增,v0.4.0 升级 top18 终态库)
 
-v0.3.0 在原 LLM 多 Agent 流水线**之前**插入量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构:
+v0.3.0 在原 LLM 多 Agent 流水线**之前**插入量化前置筛选层,形成"量化广度扫描 + LLM 深度分析"双层架构。v0.4.0 将策略库升级为 2026-08-16 top18 终态库(24 家族去底部 6,来源 stock_selector 审计):
 
 ```
 [用户输入日期 + Top N]
     ↓
 📊 量化层(tradingagents/quant/,multiprocessing.Pool)
-    ├─ daily_main_board_liquid cache(2129 股,流动性前 70%)
-    ├─ 策略并行: S=2 / A=3 / B=2 / C=3(共 10 个有效策略)
+    ├─ daily_main_board cache(全量主板 ~3042 股,选股层做价格/涨跌停/流动性过滤)
+    ├─ 策略并行: S=5 / A=11 / B=2(共 18 个有效策略)
     ├─ 加权分 = sum(strategy_composite_score)
     └─ 产出: Top N 候选 + 命中策略 + 胜率 + 入场建议
     ↓
@@ -139,7 +139,7 @@ v0.3.0 在原 LLM 多 Agent 流水线**之前**插入量化前置筛选层,形�
 
 **为什么需要量化前置层?**
 
-- **降低 LLM 调用成本**: 量化层在 ~2129 股全市场扫描选出 Top N 后再让 LLM 深度分析,避免对 2000+ 股票逐只调 LLM(成本和时延都不可接受)
+- **降低 LLM 调用成本**: 量化层在全量主板中扫描选出 Top N 后再让 LLM 深度分析,避免对 3000+ 股票逐只调 LLM(成本和时延都不可接受)
 - **提供确定性信号锚**: LLM 输出有随机性,量化层基于历史回测的胜率/持仓天数给 LLM 一个确定性参考,Conflict Resolver 节点据此给最终推荐打标签
 - **多时间框架覆盖**: 量化策略涵盖日线/周线/月线/季度多时间框架,弥补 LLM 主要看新闻和基本面的盲点
 
@@ -233,6 +233,9 @@ pip install -e .
 
 # 如需使用 Google Gemini 模型（可选）：
 pip install -e ".[google]"
+
+# 如希望全市场代码优先走 adata（可选，未装时自动回退 akshare）：
+pip install -e ".[quant-data]"
 ```
 
 > **装完即可用，无需 Docker。** 安装后直接跑 `streamlit run web/app.py`（Web UI）或 `tradingagents`（CLI）即可，详见下方「Web UI」「CLI 方式」两节。Docker 仅是可选的部署方式，本地开发不需要。
@@ -244,13 +247,13 @@ pip install -e ".[google]"
 在项目根目录创建 `.env` 文件，按你选择的供应商配置：
 
 ```bash
-# ── 方案 A：MiniMax（推荐，国内直连，性价比高）──────────
-MINIMAX_API_KEY=sk-xxx
-# 申请地址：https://platform.minimaxi.com/
-
-# ── 方案 B：DeepSeek ─────────────────────────────────
+# ── 方案 A：DeepSeek（v0.4.0 默认，推荐）────────────────
 DEEPSEEK_API_KEY=sk-xxx
 # 申请地址：https://platform.deepseek.com/
+
+# ── 方案 B：MiniMax（国内直连备选）────────────────────
+MINIMAX_API_KEY=sk-xxx
+# 申请地址：https://platform.minimaxi.com/
 
 # ── 方案 C：智谱 GLM ─────────────────────────────────
 ZHIPU_API_KEY=xxx
@@ -277,7 +280,7 @@ ANTHROPIC_AUTH_TOKEN=your-kimi-token
 ```python
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 
-# ── DeepSeek 示例（v0.3.0 默认，推荐）──────────────
+# ── DeepSeek 示例（v0.4.0 默认，推荐）──────────────
 config = {
     "llm_provider": "deepseek",
     "deep_think_llm": "deepseek-v4-pro",        # Research Manager + Portfolio Manager
@@ -314,7 +317,7 @@ tradingagents            # 交互式 CLI(单股 LLM 深度分析)
 tradingagents --help     # 查看所有选项
 
 # v0.3.0 量化层独立子命令(不需 LLM key,跑全市场策略扫描)
-tradingagents quant-pick --today 2026-07-19 --top-n 20 --workers 8     --cache daily_main_board_liquid --output-format json
+tradingagents quant-pick --today 2026-07-19 --top-n 10 --workers 8 --cache daily_main_board --output-format json
 tradingagents quant-pick --help   # 查看所有量化选项
 ```
 
@@ -323,8 +326,8 @@ tradingagents quant-pick --help   # 查看所有量化选项
 `scripts/daily_pipeline.py` 是每日 cron 入口,默认只跑量化层,`--with-llm` 启用 LLM 深度分析:
 
 ```bash
-# 仅量化层(12 分钟,不需 LLM key)
-python scripts/daily_pipeline.py --today 2026-07-19 --top-n 20 --workers 8
+# 仅量化层(冷缓存约 70s,热缓存约 37s,不需 LLM key)
+python scripts/daily_pipeline.py --today 2026-07-19 --top-n 10 --workers 8
 
 # 量化层 + LLM 深度分析(对 Top N 逐只调 LangGraph,需 LLM key)
 python scripts/daily_pipeline.py --today 2026-07-19 --top-n 5 --with-llm     --llm-provider deepseek --tickers 600428,000739,603669
@@ -339,7 +342,7 @@ python scripts/daily_pipeline.py --today 2026-07-19 --top-n 5 --with-llm     --l
 
 ## Web UI
 
-内置 Streamlit 可视化界面(v0.3.0 改名 **Aquant 投研工具**),4 tab 布局,集成量化层和 LLM 层完整工作流,适合不写代码的用户。
+内置 Streamlit 可视化界面(v0.3.0 改名 **Aquant 投研工具**),7 tab 布局,覆盖"量化选股 → AI 深度分析 → 买入计划 → 持仓跟踪 → 交易记录与策略跟踪 → 综合推荐 → 历史"完整工作流,适合不写代码的用户。
 
 ### 启动
 
@@ -355,12 +358,14 @@ streamlit run web/app.py
 
 ### 功能
 
-- **4 Tab 布局**(v0.3.0):📊 量化选股 / 🤖 AI 深度分析 / 🎯 综合推荐 / 📜 历史
-- **量化层集成**:📊 tab 跑量化策略 multiprocessing.Pool,产出 Top N 候选,支持全选/中文名/命中策略详情折叠
+- **7 Tab 布局**:量化选股 / AI 深度分析 / 买入计划 / 持仓跟踪 / 交易记录 / 综合推荐 / 历史(统一细线矢量图标,非 emoji)
+- **量化层集成**:量化选股 tab 跑量化策略 multiprocessing.Pool,产出 Top N 候选,支持全选/中文名/命中策略详情折叠
+- **买入计划**:Top N 表每行一键「计划买入」,持久化命中策略、出场规则(信号出场 / 固定持仓 / ATR 参考)、策略优化记录(OOS累计收益/回撤/Sharpe/盈亏比/笔数/平均持仓)、次日涨跌停参考价,并自动关联 LLM 历史标签;支持按 计划中/持仓中/已卖出/已放弃 筛选
+- **持仓跟踪**:确认买入后进入 📈 tab,展示买入价/最新价/盈亏/持有天数,自动提示 T+1、-5% 止损预警、+8% 止盈预警、建议到期;可切换显示已卖出持仓
+- **交易记录与策略跟踪**:已平仓交易自动汇总实盘收益/胜率,并按命中策略统计实盘 vs 回测胜率、平均收益
 - **综合推荐**:🎯 tab 按 🟢强买/🟡关注/🟠冲突/🔴弃 四档分类展示(Conflict Resolver 节点)
-- **模型自选**:侧边栏 LLM 供应商(v0.3.0 默认 DeepSeek,quick=Flash / deep=Pro)
-- **量化层配置**:侧边栏 Top N 候选(5/10/20) + 并行 worker 数 + 日线缓存(liquid/全量)
-- **一键分析**:输入 6 位 A 股代码 + 日期,点击「开始分析」
+- **模型配置极简**:侧边栏仅 DeepSeek 官方 / OpenCode 中转两条数据源 + API Key 密码输入框;快速/深度模型已内置为 DeepSeek-V4-Flash / DeepSeek-V4-Pro;API Key 自动保存到本机 `~/.tradingagents/web_config.json`,重启无需重填;Top N 固定 20,worker 数固定 8
+- **一键分析**:输入 6 位 A 股代码或中文名,点击「开始分析」;分析日期自动使用今天
 - **实时进度**:12 阶段 pipeline 实时显示(7 分析师 -> 质量门控 -> 辩论 -> 风控 -> 决策)
 - **完整报告**:信号卡片(Buy/Hold/Sell)、7 份分析师报告、多空辩论、风控评估、量化上下文
 - **报告导出**:一键下载 **Markdown**(零依赖) 或 **PDF**(自动适配 Windows/macOS/Linux 中文字体),含量化上下文段
@@ -369,7 +374,7 @@ streamlit run web/app.py
 
 ### 截图
 
-> Web UI 欢迎页截图待补;启动后访问 http://localhost:8501 即可看到 4-tab 工作流(📊 量化选股 / 🤖 AI 深度分析 / 🎯 综合推荐 / 📜 历史)。
+> Web UI 欢迎页截图待补;启动后访问 http://localhost:8501 即可看到 7-tab 工作流(量化选股 / AI 深度分析 / 买入计划 / 持仓跟踪 / 交易记录 / 综合推荐 / 历史,统一矢量图标)。
 
 ---
 
@@ -381,10 +386,11 @@ streamlit run web/app.py
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `llm_provider` | `"deepseek"` | LLM 提供商(v0.3.0 默认 DeepSeek):`deepseek` / `minimax` / `qwen` / `glm` / `openai` / `anthropic` / `google` / `xai` / `ollama` |
+| `llm_provider` | `"deepseek"` | LLM 提供商。Web UI 固定 `deepseek`,仅保留 **DeepSeek 官方** 与 **OpenCode 中转** 两条数据源 |
 | `deep_think_llm` | `"deepseek-v4-pro"` | Research Manager + Portfolio Manager 用的模型 |
 | `quick_think_llm` | `"deepseek-v4-flash"` | 所有 Analyst / Researcher / Trader 用的模型 |
-| `backend_url` | `None` | 自定义 API 端点 / 第三方中转网关。可在 Web UI 侧边栏填写,或用 `.env` 的 `BACKEND_URL`;方便国内通过代理访问 Claude / OpenAI |
+| `backend_url` | `None` | OpenCode 中转网关地址。Web UI 侧边栏填写,或读 `.env` 的 `BACKEND_URL`;DeepSeek 官方模式自动留空 |
+| `llm_api_key` | `None` | API Key。Web UI 模型配置区密码输入框填写,持久化在 `~/.tradingagents/web_config.json`,重启自动恢复;未填时回退 `DEEPSEEK_API_KEY` 环境变量 |
 | `output_language` | `"Chinese"` | 报告输出语言(内部辩论始终英文) |
 | `max_debate_rounds` | `1` | Bull vs Bear 辩论轮数 |
 | `max_risk_discuss_rounds` | `1` | 风险三方辩论轮数 |
@@ -397,8 +403,12 @@ streamlit run web/app.py
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `quant_layer_enabled` | `True` | 启用量化前置筛选层。False 则跳过 Quant Picker 节点 |
-| `quant_daily_cache_name` | `"daily_main_board_liquid"` | 日线缓存名。`daily_main_board_liquid`=流动性前 70%(~2129 股,推荐,12 min);`daily_main_board`=全量主板(~3042 股,30 min) |
-| `quant_top_n_default` | `20` | 量化层返回 Top N 候选数。可选 5/10/20 |
+| `quant_daily_cache_name` | `"daily_main_board"` | 日线缓存名。`daily_main_board`=全量主板(~3042 股,默认,价格/涨跌停/流动性过滤在选股层执行);`daily_main_board_liquid`=流动性前 80%(~2433 股,数据采集层已截断) |
+| `quant_top_n_default` | `20` | 量化层返回 Top N 候选数。Web/CLI 统一固定为 20;`pick()` 仍允许 5/10/20 |
+| `quant_price_min` | `3.0` | 候选股最低股价,过滤低价/退市风险集中区 |
+| `quant_price_max` | `70.0` | 候选股最高股价(5 万以内建议手动设为 50;当前默认 70 控制一手成本) |
+| `quant_exclude_limit_up_down` | `True` | 当日收盘处于涨停价或跌停价的股票不进入候选池(按板块自动识别 10%/20% 幅度) |
+| `quant_liquidity_percentile` | `0.8` | legacy 回退值,仅 `filter_universe_topk(topk=None)` 读取。top18 终态策略显式使用 top 300/500,不受此值影响 |
 | `quant_n_workers` | `8` | multiprocessing.Pool worker 数 |
 | `quant_slice_days` | `0` | 策略数据切片天数。0=全量历史(周月季策略 EMA 路径依赖,必须全量) |
 | `quant_top_k_per_strategy` | `2` | 每个策略最多返回 top_k 只股票 |
@@ -406,6 +416,9 @@ streamlit run web/app.py
 
 **量化层环境变量**:
 - `QUANT_CACHE_DIR`: 覆盖默认 `tradingagents/quant/outputs/cache/`,开发期可指向 `stock_pick_live/outputs/cache/` 共享数据
+
+> 量化层性能优化、基准数据与调优建议见 **[docs/PERFORMANCE.md](./docs/PERFORMANCE.md)**。
+> 18 个策略的 OOS 优化记录见 **[docs/STRATEGY_OPT_RECORDS.md](./docs/STRATEGY_OPT_RECORDS.md)**;LLM 管线评估见 **[docs/LLM_PIPELINE_EVAL.md](./docs/LLM_PIPELINE_EVAL.md)**。
 
 ---
 
@@ -455,13 +468,14 @@ TradingAgents-quant/                          # v0.3.0 改名(原 TradingAgents-
 │   │   ├── quant_picker_node.py               # v0.3.0 LangGraph 量化节点
 │   │   ├── conflict_resolver.py               # v0.3.0 冲突解决节点(纯规则)
 │   │   └── utils/                             # 状态定义、工具函数
-│   ├── quant/                                 # v0.3.0 量化层(23 文件)
+│   ├── quant/                                 # v0.3.0 引入,v0.4.0 top18 终态库
 │   │   ├── quant_picker.py                    # pick() 主入口
 │   │   ├── sina_fetcher.py                    # 全市场日线抓取
 │   │   ├── data_update.py                     # 增量数据更新
 │   │   ├── config.py                          # 量化层配置
 │   │   ├── strategy/                          # 量化策略库
-│   │   │   ├── strategy_library_final.py      # S=2/A=3/B=2/C=3 共 10 个有效策略
+│   │   │   ├── strategy_library_final.py      # top18 终态库:S=5/A=11/B=2
+│   │   │   ├── optimization_records.py        # 18 策略 OOS 优化记录(固化数据)
 │   │   │   ├── base.py                        # BaseStrategy(ABC)
 │   │   │   └── *.py                           # 策略实现
 │   │   ├── features/                          # indicators / factors / pipeline
@@ -478,7 +492,7 @@ TradingAgents-quant/                          # v0.3.0 改名(原 TradingAgents-
 │       ├── propagation.py                     # 状态初始化与传播
 │       ├── reflection.py                      # 交易反思(CSI 300 基准)
 │       └── conditional_logic.py
-├── web/                                       # v0.3.0 4-tab 重构
+├── web/                                       # v0.4.0 7-tab 重构
 │   ├── app.py                                 # 最小入口(spawn guard)
 │   ├── app_main.py                            # Streamlit main 函数
 │   ├── runner.py                              # 后台线程(含 run_quant_pick_in_thread)
@@ -486,12 +500,17 @@ TradingAgents-quant/                          # v0.3.0 改名(原 TradingAgents-
 │   ├── history.py                             # AI/quant/recommendation 三类历史
 │   ├── pdf_export.py                          # PDF/Markdown 报告(含量化段)
 │   ├── launch.py                              # CLI 启动器
+│   ├── position_store.py                     # 买入计划/持仓跟踪持久化
+│   ├── user_config.py                         # 模型数据源/API Key 本机持久化
 │   └── components/                            # UI 组件
-│       ├── sidebar.py                         # 侧边栏(DeepSeek 默认 + 量化配置)
+│       ├── sidebar.py                         # 侧边栏(DeepSeek 官方/OpenCode + API Key)
 │       ├── progress_panel.py                  # 实时进度面板(含量化进度)
 │       ├── report_viewer.py                   # AI 报告展示
-│       ├── quant_pick.py                      # v0.3.0 量化选股表 + 全选
-│       └── recommendation.py                  # v0.3.0 综合推荐 4 档展示
+│       ├── quant_pick.py                      # 量化选股表 + 全选 + 计划买入
+│       ├── buy_plan.py                        # 买入计划详情(出场规则/退出建议/回测记录/涨跌停参考)
+│       ├── position_tracker.py                # 持仓跟踪与止盈止损预警
+│       ├── trade_tracker.py                   # 交易记录与策略表现跟踪
+│       └── recommendation.py                  # 综合推荐 4 档展示
 ├── cli/
 │   ├── main.py                                # Typer 主入口(analyze + quant-pick)
 │   ├── quant_pick.py                          # v0.3.0 quant-pick 子命令
@@ -506,7 +525,7 @@ TradingAgents-quant/                          # v0.3.0 改名(原 TradingAgents-
 ├── DEV_LOG.md                                 # 开发者日志(含 Week 8 quant 整合)
 ├── NOTICE                                     # Apache 2.0 归属声明
 ├── LICENSE                                    # Apache 2.0 许可证
-└── pyproject.toml                             # 包定义(tradingagents-quant v0.3.0)
+└── pyproject.toml                             # 包定义(tradingagents-quant v0.4.0)
 ```
 
 ---
@@ -518,7 +537,7 @@ TradingAgents-quant/                          # v0.3.0 改名(原 TradingAgents-
 1. **[TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)**(65K ⭐ 原版)- 多 Agent 辩论框架的奠基者,本项目继承其 LangGraph 拓扑和 Agent 角色设计。
 2. **[simonlin1212/TradingAgents-astock](https://github.com/simonlin1212/TradingAgents-astock)**(A 股深度特化 fork,v0.2.18)- 本项目直接基于此 fork,继承其 A 股数据层、7 个 A 股特化 Analyst、辩论层 A 股框架、Trader A 股约束、Web UI 和多 LLM provider 支持。
 
-TradingAgents-quant 在 v0.3.0 新增的量化前置筛选层、Conflict Resolver 节点、4-tab UI 重构和 CLI quant-pick 子命令,均建立在上游两个项目的基础之上。
+TradingAgents-quant 在 v0.3.0 新增的量化前置筛选层、Conflict Resolver 节点、Web UI 重构和 CLI quant-pick 子命令,均建立在上游两个项目的基础之上;v0.4.0 进一步加入买入计划与持仓跟踪工作流。
 
 **原始论文**:[TradingAgents: Multi-Agents LLM Financial Trading Framework](https://arxiv.org/abs/2412.20138)
 

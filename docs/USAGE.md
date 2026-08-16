@@ -1,13 +1,13 @@
 # Aquant 投研工具 - 使用文档
 
-> TradingAgents-quant v0.3.0
+> TradingAgents-quant v0.4.0
 > 量化前置筛选 + LLM 多 Agent 深度分析双层架构
 
 ## 目录
 
 - [安装](#安装)
 - [快速开始](#快速开始)
-- [Web UI 4-tab 工作流](#web-ui-4-tab-工作流)
+- [Web UI 7-tab 工作流](#web-ui-7-tab-工作流)
 - [CLI quant-pick 子命令](#cli-quant-pick-子命令)
 - [每日自动化 pipeline](#每日自动化-pipeline)
 - [配置说明](#配置说明)
@@ -90,26 +90,25 @@ tradingagents quant-pick --help # 量化选股子命令
 ### 场景一:今日选股 + AI 深度分析(推荐工作流)
 
 1. 启动 Web UI:`tradingagents-web`
-2. 在侧边栏选好日期(默认今天)、LLM provider(默认 DeepSeek)
-3. 点 **开始选股** 按钮,等 ~12 分钟跑完 10 策略 × ~2129 股
-4. 在 **📊 量化选股** tab 看到 Top N 候选表,勾选要深度分析的股票
+2. 在侧边栏选择模型数据源(DeepSeek 官方 / OpenCode 中转)并填写 API Key;分析日期自动使用今天,无需手动选择
+3. 点 **开始选股** 按钮,冷缓存约 70s 跑完 18 策略(热缓存约 37s)
+4. 在 **量化选股** tab 看到 Top N 候选表;勾选要深度分析的股票,或点某行的 **计划买入** 创建次日买入计划
 5. 点 **开始 AI 分析**(单只)或 **并行分析全部 N 只**(批量)
 6. 等 ~3-5 分钟跑完 7 Analyst + Bull/Bear 辩论 + PM
-7. 在 **🎯 综合推荐** tab 看 🟢强买 / 🟡关注 / 🟠冲突 / 🔴弃 四档推荐
+7. 在 **综合推荐** tab 看 🟢强买 / 🟡关注 / 🟠冲突 / 🔴弃 四档推荐
 8. 点击导出 Markdown 或 PDF 报告
 
 ### 场景二:已知代码,直接 AI 分析
 
 1. 在侧边栏输入框填股票代码(6 位数字)或中文名(如 "宁德时代")
-2. 选日期
-3. 点 **开始分析** 按钮
-4. 在 **🤖 AI 深度分析** tab 看进度
+2. 点 **开始分析** 按钮
+3. 在 **AI 深度分析** tab 看进度
 
 ### 场景三:命令行批量选股
 
 ```bash
 # 跑量化选股,输出 JSON
-tradingagents quant-pick --today 2026-07-20 --top-n 20 --workers 8 --output-format json
+tradingagents quant-pick --today 2026-07-20 --top-n 10 --workers 8 --output-format json
 
 # 跑完整每日 pipeline(量化 + 对 Top 5 逐只 LLM 分析)
 python scripts/daily_pipeline.py --today 2026-07-20 --with-llm --top-n 5
@@ -117,25 +116,27 @@ python scripts/daily_pipeline.py --today 2026-07-20 --with-llm --top-n 5
 
 ---
 
-## Web UI 4-tab 工作流
+## Web UI 7-tab 工作流
 
-### 📊 量化选股 tab
+### 量化选股 tab
 
-显示 Top N 候选表:
+显示 Top N 候选表(Top N 固定 20):
 
-| 排名 | 代码 | 名称 | 命中数 | 加权分 | 胜率 | 持仓天 |
-|------|------|------|--------|--------|------|--------|
-| 1 | 600428 | 营口港 | 6 | 24.81 | 65.2% | 12d |
-| 2 | 300750 | 宁德时代 | 5 | 22.10 | 60.0% | 15d |
-| ... | | | | | | |
+| 排名 | 代码 | 名称 | 分级 | 命中 | 加权分 | 胜率 | 持仓天 | 计划买入 |
+|------|------|------|------|------|--------|------|--------|----------|
+| 1 | 600428 | 营口港 | S2 | 6 | 24.81 | 65.2% | 12d | 📋 |
+| 2 | 300750 | 宁德时代 | A3 | 5 | 22.10 | 60.0% | 15d | 📋 |
+| ... | | | | | | | | |
 
 - **全选 checkbox**:一键勾选/取消全部
+- **分级 S/A/B/C**:短线与中线命中合并显示(如 `S2` = 短线 1 + 中线 1)
+- **📋 计划买入**:一键创建次日买入计划,同一股票同日期不会重复创建
 - **命中策略详情**(展开):每只股票命中的策略列表 + 描述 + 逻辑 + 触发原因
 - **入口按钮**:
   - 单只分析:选一只点 **开始 AI 分析**
   - 批量分析:选 2 只以上出现 **并行分析全部 N 只** 按钮
 
-### 🤖 AI 深度分析 tab
+### AI 深度分析 tab
 
 12 阶段进度条:
 
@@ -157,7 +158,33 @@ python scripts/daily_pipeline.py --today 2026-07-20 --with-llm --top-n 5
 - 量化上下文卡片(命中策略 + 加权分 + 胜率)
 - 下载 Markdown / PDF 按钮
 
-### 🎯 综合推荐 tab
+### 买入计划 tab
+
+展示已创建计划,点击进入详情:
+- 命中策略逐一标注出场类型:**信号出场**(无固定持仓天数)、**固定持仓 N 天**、**固定持仓 + 信号出场保护**
+- 出场操作建议按策略展示:ATR 止损(入场价 - N×ATR14)、移动止盈(浮盈触发后最高收盘 - N×当日ATR)、保本 kill 天数、信号出场说明;因子组合策略会额外提示小资金仅参考选股方向
+- 回测(OOS)记录:累计收益 / 最大回撤 / Sharpe / 盈亏比 / 卖出笔数 / 平均持仓,数据来源与口径见 `docs/STRATEGY_OPT_RECORDS.md`
+- 次日涨跌停参考价:以信号日收盘价为基准,按板块 10%/20%/30% 与 0.01 tick 计算
+- LLM 标签与置信分:自动读取该股票同日的历史分析日志(`final_signal_label` / `conviction_score`)
+- 状态筛选:全部 / 计划中 / 持仓中 / 已卖出 / 已放弃(局部刷新,不重跑整页)
+- 操作:填写实际买入日期/价格/数量确认买入,或放弃计划;买入价格默认填入信号日收盘价
+
+### 持仓跟踪 tab
+
+确认买入后自动进入本 tab:
+- 展示买入日、买入价、最新价、盈亏比例、持有天数
+- 状态规则:**持有中** / **建议到期**(达到计划持仓天数且非信号出场) / **止损预警 -5%** / **止盈预警 +8%** / **已卖出**
+- A 股 T+1:买入当日禁止卖出,UI 给出醒目提示
+- 可打开「显示已卖出持仓」查看历史已实现盈亏
+
+### 交易记录与策略跟踪 tab
+
+- 已平仓交易:买入日/买入价、卖出日/卖出价、已实现收益、持有交易日、卖出原因、命中策略
+- 策略表现:每个命中策略的实盘次数、盈利次数、实盘胜率、平均收益,并与回测胜率对比
+- 当前持仓的浮动收益一览
+- 手动卖出表单记录卖出价、日期与原因(手动/止损/止盈/到期)
+
+### 综合推荐 tab
 
 4 列彩色卡片,按 Conflict Resolver 输出的标签分类:
 
@@ -167,7 +194,7 @@ python scripts/daily_pipeline.py --today 2026-07-20 --with-llm --top-n 5
 
 点击每只股票展开看完整推理链。
 
-### 📜 历史 tab
+### 历史 tab
 
 三类历史记录:
 - 量化选股历史(每次 `pick()` 的 Top N + 命中策略)
@@ -189,7 +216,7 @@ tradingagents quant-pick [OPTIONS]
 | `--today` | 系统日期 | 选股日期(YYYY-MM-DD) |
 | `--top-n` | 20 | 返回 Top N 候选数 |
 | `--workers` | 8 | multiprocessing.Pool 大小 |
-| `--cache` | daily_main_board_liquid | 日线缓存名 |
+| `--cache` | daily_main_board | 日线缓存名 |
 | `--slice-days` | 0 | 切片天数(0=全历史) |
 | `--top-k` | 2 | 每策略返回 top_k 只 |
 | `--output-format` | terminal | terminal/json/csv/markdown |
@@ -226,7 +253,7 @@ python scripts/daily_pipeline.py [OPTIONS]
 | `--top-n` | 20 | 量化层返回 Top N |
 | `--with-llm` | False | 启用 LLM 深度分析(对 Top N 逐只跑) |
 | `--workers` | 8 | 量化层并行 worker 数 |
-| `--cache` | daily_main_board_liquid | 日线缓存名 |
+| `--cache` | daily_main_board | 日线缓存名 |
 | `--output-dir` | outputs/daily | 输出目录 |
 | `--llm-only-top` | 5 | LLM 只分析 Top N 中的前 K 只(节省 API quota) |
 
@@ -272,14 +299,14 @@ cron 示例(每个交易日 18:00 跑):
 "checkpoint_enabled": False,               # LangGraph checkpoint resume
 ```
 
-Web UI 侧边栏可覆盖:LLM 供应商 / 快速模型 / 深度模型 / API Base URL。
+Web UI 侧边栏只保留模型数据源(DeepSeek 官方 / OpenCode 中转)与 API Key 输入框;快速/深度模型已内置为 DeepSeek-V4-Flash / DeepSeek-V4-Pro;API Key 保存在本机 `~/.tradingagents/web_config.json`,重启后自动恢复;分析日期统一使用今天;量化参数(Top N=20、worker 数)由代码固定,不再暴露在侧边栏。API Key 或网关地址包含中文/空格时会被拦截并给出中文提示。
 
 ### 量化层配置
 
 ```python
 "quant_layer_enabled": True,               # 总开关
-"quant_daily_cache_name": "daily_main_board_liquid",  # 流动性前 70%(推荐)
-"quant_top_n_default": 20,                 # Top N 候选数(可选 5/10/20)
+"quant_daily_cache_name": "daily_main_board",  # 全量主板(默认,选股层过滤)
+"quant_top_n_default": 20,                 # Top N 候选数(Web/CLI 固定 20)
 "quant_n_workers": 8,                      # multiprocessing.Pool 大小
 "quant_slice_days": 0,                     # 0=全历史
 "quant_top_k_per_strategy": 2,             # 每策略返回 top_k 只
@@ -293,6 +320,7 @@ Web UI 侧边栏可覆盖:LLM 供应商 / 快速模型 / 深度模型 / API Base
 - 分析日志:`~/.tradingagents/logs/<ticker>/<date>/full_states_log_*.json`
 - 综合推荐:`~/.tradingagents/recommendations/<date>/<ticker>.json`
 - 量化选股结果:`~/.tradingagents/quant_picks/<date>.json`
+- 买入计划/持仓:`~/.tradingagents/positions/plans.json`
 
 ---
 
@@ -301,7 +329,7 @@ Web UI 侧边栏可覆盖:LLM 供应商 / 快速模型 / 深度模型 / API Base
 ```
 TradingAgents-quant/
 ├── tradingagents/
-│   ├── __init__.py                    # __version__ = "0.3.0"
+│   ├── __init__.py                    # __version__ = "0.4.0"
 │   ├── default_config.py              # 默认配置
 │   ├── agents/
 │   │   ├── analysts/                  # 7 个 Analyst
@@ -326,11 +354,12 @@ TradingAgents-quant/
 │   │   ├── sina_fetcher.py            # 全市场日线抓取
 │   │   ├── data_update.py             # 增量更新
 │   │   ├── config.py
-│   │   ├── strategy/                  # 10 个有效策略
+│   │   ├── strategy/                  # top18 终态库(S=5/A=11/B=2)
 │   │   │   ├── strategy_library_final.py  # 策略注册表
+│   │   │   ├── optimization_records.py    # 18 策略 OOS 优化记录(固化数据)
 │   │   │   ├── base.py                # BaseStrategy(ABC)
 │   │   │   ├── market_filter.py       # MA(15,35) + MA(90) 双均线
-│   │   │   └── *.py                   # 10 个策略实现
+│   │   │   └── *.py                   # 18 个策略实现
 │   │   ├── features/                  # indicators / factors / pipeline
 │   │   ├── backtest/                  # Signal 类 / Portfolio
 │   │   ├── data/                      # cache / universe / st_filter
@@ -344,12 +373,17 @@ TradingAgents-quant/
 │   ├── progress.py                    # ProgressTracker
 │   ├── history.py                     # 历史 save/load
 │   ├── pdf_export.py                  # PDF/Markdown 导出
+│   ├── position_store.py               # 买入计划/持仓跟踪持久化
+│   ├── user_config.py                  # 模型数据源/API Key 本机持久化
 │   └── components/                    # UI 组件
-│       ├── sidebar.py
-│       ├── progress_panel.py
-│       ├── report_viewer.py
-│       ├── quant_pick.py              # [v0.3.0] Top N 表格
-│       └── recommendation.py          # [v0.3.0] 4 档推荐
+│       ├── sidebar.py                  # 侧边栏
+│       ├── progress_panel.py           # 实时进度
+│       ├── report_viewer.py            # AI 报告展示
+│       ├── quant_pick.py               # Top N 表格 + 计划买入
+│       ├── buy_plan.py                 # 买入计划详情
+│       ├── position_tracker.py         # 持仓跟踪
+│       ├── trade_tracker.py            # 交易记录与策略跟踪
+│       └── recommendation.py           # 4 档推荐
 ├── cli/
 │   ├── main.py                        # Typer 主入口
 │   └── quant_pick.py                  # [v0.3.0] quant-pick 子命令
@@ -362,6 +396,9 @@ TradingAgents-quant/
 ├── tests/                             # pytest 测试套件
 ├── docs/
 │   ├── USAGE.md                       # 本文档
+│   ├── STRATEGY_OPT_RECORDS.md        # 18 策略 OOS 优化记录
+│   ├── LLM_PIPELINE_EVAL.md           # LLM 推荐 vs 后续股价评估
+│   ├── PERFORMANCE.md                 # 量化层性能基准
 │   └── INTEGRATION_PLAN_v0.3.0.md     # 整合计划(归档)
 ├── pyproject.toml
 ├── requirements.txt
@@ -377,10 +414,22 @@ TradingAgents-quant/
 
 ## 常见问题
 
-### Q1: 为什么选股要 12 分钟?
+### Q1: 为什么选股有时慢,有时快?
 
-10 个策略 × ~2129 股 × 全历史日线,multiprocessing.Pool 8 workers 并行,平均 12 分钟。优化手段:
-- 用 `daily_main_board_liquid` 缓存(流动性前 70%,~2129 股)而非全量主板(~3042 股)
+18 个策略 × ~3042 股全历史日线。v0.4.0 起默认开启 universe-prune:主进程先算好
+各策略的 top 300/500 股票池,worker 只为该池计算特征,跳过全市场 60-90s 预热。
+本机实测(3042 股缓存、8 workers):
+- 冷缓存(无 universe 缓存/无事件池缓存):**69s**,18 策略 0 错误
+- 热缓存(universe 持久化 + 事件池命中):**37s**
+- 关闭优化回退旧路径(4 workers):358s
+- 三组 Top 10 与 all_records 行数完全一致
+
+优化手段:
+- `quant_universe_prune=true`:规则策略按 top 300/500 universe 裁剪
+- FC 因子策略单独全市场 Pool,规则策略 worker 不保留全量日线
+- `quant_universe_cache=true`:universe 代码列表按数据指纹持久化
+- `build_features_vectorized(columns=...)`:top18 规则策略按需特征列,top500 日线特征从 5.8s 降到约 1s
+- 可选 `daily_main_board_liquid` 缓存(流动性前 80%,~2433 股),但会牺牲覆盖范围
 - 调高 `--workers`(但 Windows spawn 启动慢,>8 收益递减)
 - 用 `scripts/precompute_features.py` 预热周线/月线缓存
 
@@ -460,6 +509,14 @@ rm -rf ~/.tradingagents/quant_picks/
 ```
 
 ---
+
+## 相关文档
+
+- `docs/STRATEGY_OPT_RECORDS.md` — 18 策略 OOS 优化记录总表及口径说明
+- `docs/LLM_PIPELINE_EVAL.md` — LLM 推荐与后续股价变化的分档评估
+- `docs/PERFORMANCE.md` — 量化层性能基准与调优手段
+- `AUDIT_REPORT.md` — 发布前全面审计
+- `CHANGELOG.md` — 版本变更记录
 
 ## 许可证
 

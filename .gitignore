@@ -226,3 +226,6 @@ tradingagents_quant.egg-info/
 
 # Local strategy dev artifacts
 stock_pick_live/
+
+# Claude Code local scheduled tasks (machine-specific, not for release)
+.claude/

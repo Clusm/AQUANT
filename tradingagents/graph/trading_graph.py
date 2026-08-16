@@ -1,11 +1,11 @@
 # TradingAgents/graph/trading_graph.py
 
+import json
 import logging
 import os
-from pathlib import Path
-import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, Tuple, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -13,40 +13,39 @@ logger = logging.getLogger(__name__)
 
 from langgraph.prebuilt import ToolNode
 
-from tradingagents.llm_clients import create_llm_client
-
 from tradingagents.agents import *
-from tradingagents.default_config import DEFAULT_CONFIG
-from tradingagents.agents.utils.memory import TradingMemoryLog
-from tradingagents.dataflows.utils import safe_ticker_component
-from tradingagents.dataflows.config import set_config
 
 # Import the new abstract tool methods from agent_utils
 from tradingagents.agents.utils.agent_utils import (
-    get_stock_data,
-    get_indicators,
-    get_fundamentals,
     get_balance_sheet,
     get_cashflow,
-    get_income_statement,
-    get_news,
-    get_insider_transactions,
-    get_global_news,
-    get_profit_forecast,
-    get_hot_stocks,
-    get_northbound_flow,
     get_concept_blocks,
-    get_fund_flow,
     get_dragon_tiger_board,
-    get_lockup_expiry,
+    get_fund_flow,
+    get_fundamentals,
+    get_global_news,
+    get_hot_stocks,
+    get_income_statement,
+    get_indicators,
     get_industry_comparison,
+    get_insider_transactions,
+    get_lockup_expiry,
+    get_news,
+    get_northbound_flow,
+    get_profit_forecast,
+    get_stock_data,
 )
+from tradingagents.agents.utils.memory import TradingMemoryLog
+from tradingagents.dataflows.config import set_config
+from tradingagents.dataflows.utils import safe_ticker_component
+from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.llm_clients import create_llm_client
 
 from .checkpointer import checkpoint_step, clear_checkpoint, get_checkpointer, thread_id
 from .conditional_logic import ConditionalLogic
-from .setup import GraphSetup
 from .propagation import Propagator
 from .reflection import Reflector
+from .setup import GraphSetup
 from .signal_processing import SignalProcessor
 
 
@@ -55,7 +54,7 @@ class TradingAgentsGraph:
 
     def __init__(
         self,
-        selected_analysts=["market", "social", "news", "fundamentals", "policy", "hot_money", "lockup"],
+        selected_analysts: List[str] | None = None,
         debug=False,
         config: Dict[str, Any] = None,
         callbacks: Optional[List] = None,
@@ -68,6 +67,8 @@ class TradingAgentsGraph:
             config: Configuration dictionary. If None, uses default config
             callbacks: Optional list of callback handlers (e.g., for tracking LLM/tool stats)
         """
+        if selected_analysts is None:
+            selected_analysts = ["market", "social", "news", "fundamentals", "policy", "hot_money", "lockup"]
         self.debug = debug
         self.config = config or DEFAULT_CONFIG
         self.callbacks = callbacks or []
@@ -81,6 +82,10 @@ class TradingAgentsGraph:
 
         # Initialize LLMs with provider-specific thinking configuration
         llm_kwargs = self._get_provider_kwargs()
+
+        # Web UI 输入框提供的 API Key 优先于环境变量
+        if self.config.get("llm_api_key"):
+            llm_kwargs["api_key"] = self.config["llm_api_key"]
 
         # Add callbacks to kwargs if provided (passed to LLM constructor)
         if self.callbacks:
@@ -389,8 +394,8 @@ class TradingAgentsGraph:
             Dict {ticker: quant_context_string}. Tickers not in Top N get an
             empty-string context (analysts run without quant context).
         """
-        from tradingagents.quant import pick as quant_pick
         from tradingagents.agents.quant_picker_node import _extract_ticker_context
+        from tradingagents.quant import pick as quant_pick
 
         if not self.config.get("quant_layer_enabled", True):
             logger.info("Quant layer disabled, returning empty contexts")
@@ -399,7 +404,7 @@ class TradingAgentsGraph:
         today = pd.Timestamp(trade_date)
         result = quant_pick(
             today=today,
-            daily_cache_name=self.config.get("quant_daily_cache_name", "daily_main_board_liquid"),
+            daily_cache_name=self.config.get("quant_daily_cache_name", "daily_main_board"),
             top_k=self.config.get("quant_top_k_per_strategy", 2),
             n_workers=self.config.get("quant_n_workers", 8),
             slice_days=self.config.get("quant_slice_days", 0),
@@ -567,7 +572,7 @@ class TradingAgentsGraph:
         # - Fresh run (init_agent_state is not None): patch init state directly.
         # - Resume run (init_agent_state is None): patch the checkpoint state via
         #   update_state so Quant Picker sees quant_pick_context as pre-populated
-        #   and stays a no-op. Without this, resume re-runs pick() (~12 min).
+        #   and stays a no-op. Without this, resume re-runs pick() (~40-70s with universe-prune).
         if pre_quant_context:
             if init_agent_state is not None:
                 init_agent_state["quant_pick_context"] = pre_quant_context
@@ -640,6 +645,10 @@ class TradingAgentsGraph:
             "final_trade_decision": final_state["final_trade_decision"],
             "quant_pick_context": final_state.get("quant_pick_context", ""),
             "final_ranked_decision": final_state.get("final_ranked_decision", ""),
+            "final_signal_label": final_state.get("final_signal_label", ""),
+            "conviction_score": final_state.get("conviction_score"),
+            "data_quality_summary": final_state.get("data_quality_summary", ""),
+            "ticker_source": final_state.get("ticker_source", ""),
         }
 
         # Save to file. Reject ticker values that would escape the
@@ -649,8 +658,10 @@ class TradingAgentsGraph:
         directory.mkdir(parents=True, exist_ok=True)
 
         log_path = directory / f"full_states_log_{trade_date}.json"
-        with open(log_path, "w", encoding="utf-8") as f:
+        tmp_path = log_path.with_suffix(".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(self.log_states_dict[str(trade_date)], f, indent=4)
+        tmp_path.replace(log_path)
 
     def process_signal(self, full_signal):
         """Process a signal to extract the core decision."""

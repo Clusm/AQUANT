@@ -21,9 +21,11 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import pandas as pd
+
 from tradingagents.quant.quant_picker import pick
 from tradingagents.quant.strategy.strategy_library_final import (
-    get_all_strategies_final, get_tier_of_final,
+    get_all_strategies_final,
+    get_tier_of_final,
 )
 
 
@@ -38,7 +40,7 @@ def main():
     strats = get_all_strategies_final()
     _log(f"策略库: {len(strats)} 个有效策略")
     _log(f"今天: {today.date()}, cache: {cache}")
-    _log(f"effective tiers:")
+    _log("effective tiers:")
     for n in strats:
         _log(f"  {n:30s}  tier={get_tier_of_final(n)}  comp={strats[n].get('new_composite_score')}")
     _log("=" * 80)

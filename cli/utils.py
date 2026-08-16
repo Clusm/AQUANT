@@ -1,6 +1,6 @@
-import questionary
 from typing import List, Tuple
 
+import questionary
 from rich.console import Console
 
 from cli.models import AnalystType

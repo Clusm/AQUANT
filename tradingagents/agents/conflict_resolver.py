@@ -125,6 +125,23 @@ def _detect_llm_rating(final_trade_decision: str) -> str:
     if m:
         return _normalize_rating(m.group(1), VALID)
 
+    # Pattern 2b: Chinese label followed by Chinese rating word, e.g.
+    # "最终评级：**减持 (Underweight)**" or "评级：买入". Old free-text runs
+    # were classified as Unknown because only the English keyword was matched.
+    _CN_RATING = {
+        "减持": "Underweight", "低配": "Underweight",
+        "卖出": "Sell", "减仓": "Sell",
+        "买入": "Buy", "增持": "Overweight", "超配": "Overweight",
+        "持有": "Hold", "观望": "Hold",
+    }
+    m = re.search(
+        r"(?:评级|推荐|决策|建议|最终评级|投资评级)\s*[:：]\s*"
+        r"[^\n]{0,20}?(减持|低配|卖出|减仓|买入|增持|超配|持有|观望)",
+        final_trade_decision,
+    )
+    if m:
+        return _CN_RATING.get(m.group(1), "Unknown")
+
     # Pattern 3: "Decision: Buy" (English free-text variant)
     m = re.search(
         r"\b(?:Decision|Final Decision|Recommendation)\s*[:：]\s*\*?\*?\s*" + KW,
@@ -146,7 +163,7 @@ def _detect_llm_rating(final_trade_decision: str) -> str:
     # emphasis or trailing punctuation).
     lines = [ln.strip() for ln in final_trade_decision.strip().splitlines() if ln.strip()]
     if lines:
-        last = lines[-1].strip("*_` ").rstrip(".。! !?").strip()
+        last = lines[-1].strip().strip("*_`").rstrip(".。!? ").strip()
         for v in VALID:
             if last.lower() == v.lower():
                 return v
@@ -163,6 +180,38 @@ def _normalize_rating(raw: str, valid: tuple[str, ...]) -> str:
     return "Unknown"
 
 
+def compute_conviction(quant_state: str, quant_info: dict, llm_rating: str) -> int:
+    """合成 0-100 连续置信分(供档内排序 + 阈值设定)。
+
+    量化为主、LLM 为辅(回测显示量化命中是主导信号):
+      - hit: base 55 + 0~25 量化增强(加权分/胜率),LLM 再调整
+      - miss: base 15,上限受限(LLM 看多最多 +10 → 25)
+      - skipped/error: base 45(量化未参与,尊重 LLM 判断)
+    LLM 调整: Buy/Overweight +20(hit)/+15(skip/error)/+10(miss);
+      Hold +8(hit)/+3(其它); Underweight/Sell -25(hit)/-15(skip)/-5(miss);
+      Unknown -15(hit,评级缺失 = 信息质量低,压低)/0(其它)。
+    """
+    ws = float(quant_info.get("weighted_score", 0.0) or 0.0)
+    wr = max(0.0, min(1.0, float(quant_info.get("win_rate", 0.0) or 0.0)))
+    base = {"hit": 55, "miss": 15, "skipped": 45, "error": 45}.get(quant_state, 45)
+
+    if quant_state == "hit":
+        base += int(25 * (0.6 * min(ws / 8.0, 1.0) + 0.4 * wr))
+
+    if llm_rating in ("Buy", "Overweight"):
+        adj = {"hit": 20, "skipped": 15, "error": 15, "miss": 10}[quant_state]
+    elif llm_rating == "Hold":
+        adj = 8 if quant_state == "hit" else 3
+    elif llm_rating in ("Sell", "Underweight"):
+        adj = {"hit": -25, "skipped": -15, "error": -15, "miss": -5}[quant_state]
+    elif llm_rating == "Unknown":
+        adj = -15 if quant_state == "hit" else 0
+    else:
+        adj = 0
+
+    return max(0, min(100, base + adj))
+
+
 def _assign_label(quant_state: str, quant_info: dict, llm_rating: str) -> tuple[str, str, str]:
     """Assign label based on quant state + LLM signal.
 
@@ -176,7 +225,6 @@ def _assign_label(quant_state: str, quant_info: dict, llm_rating: str) -> tuple[
     llm_buy_like = llm_rating in ("Buy", "Overweight")
     llm_sell_like = llm_rating in ("Sell", "Underweight")
     llm_hold = llm_rating == "Hold"
-    llm_unknown = llm_rating == "Unknown"
 
     # ── skipped / error: quant layer not consulted or crashed ──────────
     # Respect LLM verdict without quant-based downgrade. skipped = manual
@@ -287,6 +335,7 @@ def create_conflict_resolver() -> Callable[[Any], dict]:
             quant_state, quant_info = _detect_quant_state(quant_context)
             llm_rating = _detect_llm_rating(final_trade_decision)
             label, recommendation, rationale = _assign_label(quant_state, quant_info, llm_rating)
+            conviction = compute_conviction(quant_state, quant_info, llm_rating)
 
             # Build quant signal summary
             if quant_state == "hit":
@@ -312,6 +361,7 @@ def create_conflict_resolver() -> Callable[[Any], dict]:
                 "",
                 f"**标签**: {label}",
                 f"**建议**: {recommendation}",
+                f"**置信分**: {conviction}/100",
                 "",
                 "## 量化信号",
                 quant_signal,
@@ -332,7 +382,11 @@ def create_conflict_resolver() -> Callable[[Any], dict]:
                 ticker, label, quant_state, llm_rating,
             )
 
-            return {"final_ranked_decision": final_ranked_decision, "final_signal_label": label}
+            return {
+                "final_ranked_decision": final_ranked_decision,
+                "final_signal_label": label,
+                "conviction_score": conviction,
+            }
         except Exception as exc:
             # Never crash the LangGraph pipeline. Fall back to a discard label
             # with the error embedded so the user sees something went wrong.

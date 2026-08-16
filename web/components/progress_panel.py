@@ -5,13 +5,14 @@ from __future__ import annotations
 import streamlit as st
 
 from web.progress import PIPELINE_STAGES, ProgressTracker, QuantProgressTracker
+from web.theme import BORDER_LIGHT, MUTED, PRIMARY, SIGNAL, SURFACE_2, TEXT, esc
 
 
 def _status_badge(status: str) -> str:
     if status == "done":
-        return '<span style="color:#22c55e; font-size:1.3rem;">●</span>'
+        return f'<span style="color:{SIGNAL["strong_buy"]}; font-size:1.3rem;">●</span>'
     if status == "active":
-        return '<span style="color:#ff5a1f; font-size:1.3rem;">◉</span>'
+        return f'<span style="color:{PRIMARY}; font-size:1.3rem;">◉</span>'
     return '<span style="color:#333; font-size:1.3rem;">○</span>'
 
 
@@ -26,11 +27,11 @@ def render_progress(tracker: ProgressTracker) -> None:
     st.markdown(
         f"""
         <div style="text-align:center; margin:1rem 0 0.5rem;">
-            <span style="font-size:1.6rem; font-weight:700; color:#f5f1eb;">
+            <span style="font-size:1.6rem; font-weight:700; color:{TEXT};">
                 分析进行中
             </span>
-            <span style="font-size:1.1rem; color:#888; margin-left:0.8rem;">
-                {tracker.ticker}
+            <span style="font-size:1.1rem; color:{MUTED}; margin-left:0.8rem;">
+                {esc(tracker.ticker)}
             </span>
         </div>
         """,
@@ -56,40 +57,50 @@ def render_progress(tracker: ProgressTracker) -> None:
     post_stages = PIPELINE_STAGES[7:]
 
     st.markdown(
-        '<div style="margin:0.5rem 0 0.3rem; font-size:0.85rem; color:#888;">ANALYSTS</div>',
+        f'<div style="margin:0.5rem 0 0.3rem; font-size:0.85rem; color:{MUTED};">ANALYSTS</div>',
         unsafe_allow_html=True,
     )
 
     cols = st.columns(len(analyst_stages))
-    for col, stage in zip(cols, analyst_stages):
+    for col, stage in zip(cols, analyst_stages, strict=True):
         status = tracker.stage_status(stage["id"])
         badge = _status_badge(status)
-        label_color = "#f5f1eb" if status == "active" else "#888" if status == "pending" else "#22c55e"
+        label_color = (
+            TEXT if status == "active"
+            else MUTED if status == "pending"
+            else SIGNAL["strong_buy"]
+        )
         col.markdown(
             f"""
-            <div style="text-align:center; padding:0.5rem 0;">
+            <div style="text-align:center; padding:0.5rem 0.35rem; background:{SURFACE_2};
+                        border:1px solid {BORDER_LIGHT}; border-radius:10px; min-height:4.2rem;">
                 {badge}<br>
-                <span style="font-size:0.75rem; color:{label_color};">{stage['name']}</span>
+                <span style="font-size:0.75rem; color:{label_color};">{esc(stage['name'])}</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
     st.markdown(
-        '<div style="margin:0.8rem 0 0.3rem; font-size:0.85rem; color:#888;">PIPELINE</div>',
+        f'<div style="margin:0.8rem 0 0.3rem; font-size:0.85rem; color:{MUTED};">PIPELINE</div>',
         unsafe_allow_html=True,
     )
 
     cols2 = st.columns(len(post_stages))
-    for col, stage in zip(cols2, post_stages):
+    for col, stage in zip(cols2, post_stages, strict=True):
         status = tracker.stage_status(stage["id"])
         badge = _status_badge(status)
-        label_color = "#f5f1eb" if status == "active" else "#888" if status == "pending" else "#22c55e"
+        label_color = (
+            TEXT if status == "active"
+            else MUTED if status == "pending"
+            else SIGNAL["strong_buy"]
+        )
         col.markdown(
             f"""
-            <div style="text-align:center; padding:0.5rem 0;">
+            <div style="text-align:center; padding:0.5rem 0.35rem; background:{SURFACE_2};
+                        border:1px solid {BORDER_LIGHT}; border-radius:10px; min-height:4.2rem;">
                 {badge}<br>
-                <span style="font-size:0.75rem; color:{label_color};">{stage['name']}</span>
+                <span style="font-size:0.75rem; color:{label_color};">{esc(stage['name'])}</span>
             </div>
             """,
             unsafe_allow_html=True,
@@ -114,7 +125,7 @@ def render_progress(tracker: ProgressTracker) -> None:
 
     if completed_reports:
         st.markdown(
-            '<div style="margin:0.5rem 0 0.3rem; font-size:0.85rem; color:#888;">'
+            f'<div style="margin:0.5rem 0 0.3rem; font-size:0.85rem; color:{MUTED};">'
             f"REPORTS ({len(completed_reports)})</div>",
             unsafe_allow_html=True,
         )
@@ -137,11 +148,11 @@ def render_quant_progress(tracker: QuantProgressTracker) -> None:
     st.markdown(
         f"""
         <div style="text-align:center; margin:1rem 0 0.5rem;">
-            <span style="font-size:1.6rem; font-weight:700; color:#f5f1eb;">
+            <span style="font-size:1.6rem; font-weight:700; color:{TEXT};">
                 量化选股进行中
             </span>
-            <span style="font-size:1.1rem; color:#888; margin-left:0.8rem;">
-                {tracker.trade_date}
+            <span style="font-size:1.1rem; color:{MUTED}; margin-left:0.8rem;">
+                {esc(tracker.trade_date)}
             </span>
         </div>
         """,
@@ -155,7 +166,7 @@ def render_quant_progress(tracker: QuantProgressTracker) -> None:
     # === 数据增量更新阶段 ===
     if tracker.data_update_active:
         st.markdown(
-            '<div style="margin:0.5rem 0 0.3rem; font-size:0.85rem; color:#888;">'
+            f'<div style="margin:0.5rem 0 0.3rem; font-size:0.85rem; color:{MUTED};">'
             '📥 数据增量更新</div>',
             unsafe_allow_html=True,
         )
@@ -171,7 +182,7 @@ def render_quant_progress(tracker: QuantProgressTracker) -> None:
         st.progress(
             pct,
             text=f"{completed}/{total} 只 · 失败 {tracker.data_update_failed} · "
-                 f"当前: {tracker.data_update_latest_code}",
+                 f"当前: {esc(tracker.data_update_latest_code)}",
         )
         # 数据更新阶段不显示策略进度,直接返回
         return
@@ -188,15 +199,15 @@ def render_quant_progress(tracker: QuantProgressTracker) -> None:
             text=f"{completed}/{total} 策略  ·  {_format_time(tracker.elapsed)}",
         )
 
-    # Worker 初始化阶段提示(completed=0 表示还没有策略完成,worker 在预热特征缓存)
+    # Worker 初始化阶段提示(completed=0 表示还没有策略完成,worker 在准备数据)
     if completed == 0 and not tracker.is_complete:
         st.info(
-            "⏳ 正在启动 worker 进程 + 预热特征缓存(预计 60-90s)...\n\n"
-            "各 worker 加载日线数据并计算日线/周线/月线特征。"
+            "正在启动 worker 进程 + 准备 universe 数据(通常 5-15s)...\n\n"
+            "默认启用 universe-prune + 按需特征列,worker 只为各策略的 top 300/500 股票池计算所需特征。"
             "第一个策略完成后进度条开始移动。"
         )
     elif tracker.latest_strategy and not tracker.is_complete:
-        st.caption(f"最新完成: {tracker.latest_strategy}")
+        st.caption(f"最新完成: {esc(tracker.latest_strategy)}")
 
     # 已完成策略列表(按完成顺序,最多显示 12 个)
     if tracker.per_strategy_stats and not tracker.is_complete:
@@ -209,8 +220,8 @@ def render_quant_progress(tracker: QuantProgressTracker) -> None:
                 err = s.get("error")
                 status = "ERR" if err else f"hits={hits}"
                 st.markdown(
-                    f"- `[{tier}]` **{name}** — {status} · {elapsed:.1f}s"
-                    + (f"  ⚠️ {err[:80]}" if err else "")
+                    f"- `[{esc(tier)}]` **{esc(name)}** — {esc(status)} · {elapsed:.1f}s"
+                    + (f"  ⚠️ {esc(err[:80])}" if err else "")
                 )
 
     c1, c2, c3, c4 = st.columns(4)
@@ -224,7 +235,7 @@ def render_quant_progress(tracker: QuantProgressTracker) -> None:
 
     if tracker.is_complete and tracker.top_picks is not None:
         st.markdown(
-            f'<div style="margin:0.5rem 0 0.3rem; font-size:0.85rem; color:#888;">'
+            f'<div style="margin:0.5rem 0 0.3rem; font-size:0.85rem; color:{MUTED};">'
             f'TOP PICKS ({len(tracker.top_picks)})</div>',
             unsafe_allow_html=True,
         )

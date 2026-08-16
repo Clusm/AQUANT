@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import pandas as pd
 
-from tradingagents.quant.config import (CACHE_DIR, UNIVERSE_LIQUIDITY_TURNOVER, UNIVERSE_MIN_LISTING_DAYS)
+from tradingagents.quant.config import CACHE_DIR, UNIVERSE_LIQUIDITY_TURNOVER, UNIVERSE_MIN_LISTING_DAYS
 from tradingagents.quant.data import cache as cache_mod
 from tradingagents.quant.utils.trading_calendar import get_calendar
-
 
 SH_MAIN_PREFIX = "60"
 SZ_MAIN_PREFIX = "00"
@@ -20,6 +19,49 @@ SZ_MAIN_PREFIX = "00"
 
 def is_main_board(code: str) -> bool:
     return code.startswith(SH_MAIN_PREFIX) or code.startswith(SZ_MAIN_PREFIX)
+
+
+def price_limit_pct(code: str) -> float:
+    """A 股普通股票单日涨跌停幅度(不含 ST 与新股特殊阶段)。
+
+    主板 60/00 为 10%;创业板 30 / 科创板 68 为 20%;北交所 8/4 为 30%。
+    ST 股票为 5%,但 universe 构建在 ST 过滤之后,这里按普通股票处理。
+    """
+    code = str(code).strip()
+    if code.startswith(("30", "68")):
+        return 0.20
+    if code.startswith(("4", "8")):
+        return 0.30
+    return 0.10
+
+
+def _round_tick(price: float) -> float:
+    """按 0.01 元价格最小变动单位四舍五入。"""
+    return float(round(float(price) * 100) / 100)
+
+
+def is_at_price_limit(code: str, *, close: float,
+                      pre_close: float | None = None,
+                      change_pct: float | None = None) -> bool:
+    """判断某交易日收盘价是否处于涨停价或跌停价。
+
+    优先用 pre_close 计算精确涨跌停价(按 0.01 元 tick 取整);
+    旧缓存没有 pre_close 时回退 change_pct 阈值(涨跌停幅度 - 0.5pct)。
+    """
+    pct = price_limit_pct(code)
+    close = float(close)
+
+    if pre_close is not None and float(pre_close) > 0:
+        base = _round_tick(float(pre_close))
+        limit_up = _round_tick(base * (1.0 + pct))
+        limit_down = _round_tick(base * (1.0 - pct))
+        return close >= limit_up - 1e-9 or close <= limit_down + 1e-9
+
+    if change_pct is not None:
+        threshold = pct * 100.0 - 0.5
+        return abs(float(change_pct)) >= threshold
+
+    return False
 
 
 def _lazy_fetcher():
@@ -148,7 +190,7 @@ def filter_universe(daily_df: pd.DataFrame, *,
     st_codes = get_st_codes_on_date(on_date, st_history)
     list_dates = get_list_dates()
 
-    window_start = on_date - pd.Timedelta(days=liquidity_window * 2)
+    window_start = on_date - pd.Timedelta(liquidity_window * 2, unit="D")
     df_window = daily_df[(daily_df["trade_date"] <= on_date) &
                          (daily_df["trade_date"] >= window_start)].copy()
 
@@ -199,6 +241,7 @@ def filter_universe_topk(daily_df: pd.DataFrame, *,
                          suspended_window: int = 5,
                          price_min: float | None = None,
                          price_max: float | None = None,
+                         exclude_limit: bool | None = None,
                          st_history: pd.DataFrame | None = None) -> list[str]:
     """B2: 基于历史成交额排序选 top K 股票池(去幸存者偏差)。
 
@@ -207,7 +250,8 @@ def filter_universe_topk(daily_df: pd.DataFrame, *,
     2. 历史 ST 过滤(B1)
     3. 上市天数、停牌过滤
     4. 价格过滤(price_min/price_max,默认从 default_config 读)
-    5. 按过去 liquidity_window 日均成交额排序,取 top K / percentile
+    5. 涨跌停过滤(默认开启):当日收盘处于涨停价/跌停价不入选
+    6. 按过去 liquidity_window 日均成交额排序,取 top K / percentile
 
     与 filter_universe 的区别:不设最低成交额阈值,而是按 top K 截断。
     这样在回测期内,股票池会随市场变化(某月 top 500 与下月不同)。
@@ -217,9 +261,14 @@ def filter_universe_topk(daily_df: pd.DataFrame, *,
     - 显式传 topk(非 None) -> 用 topk
     - 都不传 -> 从 default_config 读 quant_liquidity_percentile(默认 0.8)
 
+    注意:top18 终态策略全部显式传 topk=300/500,所以默认的 0.8 流动性
+    percentile 只作为未来策略 / 兼容旧调用的回退值,不参与当前生产选股。
+
     price_min/price_max:股价过滤边界。None 时从 default_config 读
-    quant_price_min/quant_price_max(默认 3.0/120.0)。
-    价格过滤在流动性排序之前应用,避免低价/高价股占用 top K 名额。
+    quant_price_min/quant_price_max(默认 3.0/70.0)。
+    exclude_limit: None 时读 quant_exclude_limit_up_down(默认 True)。
+    涨跌停判断使用当日收盘前已知的 pre_close 计算精确涨跌停价,
+    不使用未来数据;因此在历史回测中同样安全。
     """
     if price_min is None or price_max is None:
         from tradingagents.default_config import DEFAULT_CONFIG
@@ -228,10 +277,12 @@ def filter_universe_topk(daily_df: pd.DataFrame, *,
             price_min = _cfg.get("quant_price_min")
         if price_max is None:
             price_max = _cfg.get("quant_price_max")
+        if exclude_limit is None:
+            exclude_limit = bool(_cfg.get("quant_exclude_limit_up_down", True))
 
     on_date = pd.Timestamp(on_date).normalize()
     cache_key = (on_date, topk, percentile, liquidity_window, min_listing_days,
-                 suspended_window, price_min, price_max)
+                 suspended_window, price_min, price_max, bool(exclude_limit))
     if cache_key in _universe_topk_cache:
         return _universe_topk_cache[cache_key]
 
@@ -239,7 +290,7 @@ def filter_universe_topk(daily_df: pd.DataFrame, *,
     list_dates = get_list_dates()
     calendar = _get_calendar()
 
-    window_start = on_date - pd.Timedelta(days=liquidity_window * 2)
+    window_start = on_date - pd.Timedelta(liquidity_window * 2, unit="D")
     df_window = daily_df[(daily_df["trade_date"] <= on_date) &
                          (daily_df["trade_date"] >= window_start)].copy()
     # 显式排序,确保后续 grp.tail() / grp.iloc[-1] 拿到的是最近一天
@@ -278,11 +329,27 @@ def filter_universe_topk(daily_df: pd.DataFrame, *,
         if trading_days_listed < min_listing_days:
             continue
 
+        last_row = recent.iloc[-1]
         if price_min is not None or price_max is not None:
-            last_close = float(recent["close"].iloc[-1])
+            last_close = float(last_row["close"])
             if price_min is not None and last_close < price_min:
                 continue
             if price_max is not None and last_close > price_max:
+                continue
+
+        # 当日涨停/跌停不入选。pre_close/change_pct 均为当日收盘前可得的历史
+        # 数据,不存在前视;过滤发生在流动性排序之前,避免封板股占用 top K。
+        if exclude_limit:
+            pre_close = last_row.get("pre_close") if "pre_close" in recent.columns else None
+            pre_close = None if pd.isna(pre_close) else float(pre_close)
+            change_pct = last_row.get("change_pct") if "change_pct" in recent.columns else None
+            change_pct = None if pd.isna(change_pct) else float(change_pct)
+            if is_at_price_limit(
+                code,
+                close=float(last_row["close"]),
+                pre_close=pre_close,
+                change_pct=change_pct,
+            ):
                 continue
 
         avg_amount = float(recent["amount"].mean())

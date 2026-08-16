@@ -43,7 +43,7 @@ def main() -> None:
     print("=" * 70)
     print(f"总耗时: {elapsed:.1f}s")
     print(f"策略数: {result['n_strategies_run']}, 错误: {result['n_strategies_error']}")
-    print(f"Top 10 候选:")
+    print("Top 10 候选:")
     top = result["top_picks"]
     if len(top) > 0:
         cols = [c for c in ["stock_code", "strategy", "weighted_score", "n_strategies"] if c in top.columns]

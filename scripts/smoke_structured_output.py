@@ -29,7 +29,6 @@ from tradingagents.agents.trader.trader import create_trader
 from tradingagents.graph.signal_processing import SignalProcessor
 from tradingagents.llm_clients import create_llm_client
 
-
 PROVIDER_DEFAULTS = {
     "openai": ("gpt-5.4-mini", None),
     "google": ("gemini-2.5-flash", None),

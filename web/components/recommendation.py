@@ -8,7 +8,7 @@ from typing import Any
 import streamlit as st
 
 from tradingagents.dataflows.a_stock import get_stock_name
-
+from web.theme import MUTED, SIGNAL
 
 # 6 label combinations -> 4 buckets
 RECOMMENDATION_LABELS = {
@@ -106,16 +106,21 @@ def render_recommendation(recommendations: dict[str, dict[str, Any]]) -> None:
         bucket = parse_label(info.get("label", ""))
         buckets[bucket].append((ticker, info))
 
+    # 档内按置信分降序排(None 最后),高分优先可见
+    for b in buckets:
+        buckets[b].sort(key=lambda x: (x[1].get("conviction_score") is None,
+                                       -(x[1].get("conviction_score") or 0)))
+
     cols = st.columns(4)
 
     column_meta = [
-        ("strong_buy", "🟢 强买", "#22c55e"),
-        ("watch", "🟡 关注", "#eab308"),
-        ("conflict", "🟠 冲突", "#f97316"),
-        ("discard", "🔴 弃", "#ef4444"),
+        ("strong_buy", "🟢 强买", SIGNAL["strong_buy"]),
+        ("watch", "🟡 关注", SIGNAL["watch"]),
+        ("conflict", "🟠 冲突", SIGNAL["conflict"]),
+        ("discard", "🔴 弃", SIGNAL["discard"]),
     ]
 
-    for col, (bucket_id, label, color) in zip(cols, column_meta):
+    for col, (bucket_id, label, color) in zip(cols, column_meta, strict=True):
         items = buckets[bucket_id]
         count = len(items)
         col.markdown(
@@ -123,7 +128,7 @@ def render_recommendation(recommendations: dict[str, dict[str, Any]]) -> None:
             <div style="text-align:center; padding:0.6rem; border:2px solid {color};
                         border-radius:0.5rem; margin-bottom:0.5rem; background:rgba(0,0,0,0.2);">
                 <div style="font-size:1.1rem; font-weight:700; color:{color};">{label}</div>
-                <div style="font-size:0.85rem; color:#888; margin-top:0.2rem;">{count} 只</div>
+                <div style="font-size:0.85rem; color:{MUTED}; margin-top:0.2rem;">{count} 只</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -133,13 +138,17 @@ def render_recommendation(recommendations: dict[str, dict[str, Any]]) -> None:
             continue
         for ticker, info in items:
             name = get_stock_name(ticker)
-            display_title = f"{name}（{ticker}）" if name else f"`{ticker}`"
-            with col.expander(display_title, expanded=False):
+            score = info.get("conviction_score")
+            score_tag = f" · 置信 {score}" if isinstance(score, (int, float)) else ""
+            base_title = f"{name}（{ticker}）" if name else f"`{ticker}`"
+            with col.expander(base_title + score_tag, expanded=False):
                 final_ranked = info.get("final_ranked_decision", "")
                 final_decision = info.get("final_trade_decision", "")
                 signal = info.get("signal", "")
                 if signal:
                     st.caption(f"信号: {signal}")
+                if isinstance(score, (int, float)):
+                    st.caption(f"置信分: {score}/100")
                 # 完整显示,不再截断(外层 expander 默认收起,长文不撑爆 UI)
                 if final_decision:
                     st.markdown("**最终决策:**")

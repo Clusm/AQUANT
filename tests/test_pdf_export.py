@@ -7,11 +7,11 @@ from fpdf.enums import WrapMode
 
 from web.pdf_export import (
     PDFExportError,
-    _ReportPDF,
     _compact_inline_text,
     _discover_cjk_fonts,
     _find_cjk_fonts,
     _format_table_cells,
+    _ReportPDF,
     generate_pdf,
 )
 

@@ -1,9 +1,10 @@
-import os
-import requests
-import pandas as pd
 import json
+import os
 from datetime import datetime
 from io import StringIO
+
+import pandas as pd
+import requests
 
 API_BASE_URL = "https://www.alphavantage.co/query"
 
@@ -24,12 +25,12 @@ def format_datetime_for_api(date_input) -> str:
         try:
             dt = datetime.strptime(date_input, "%Y-%m-%d")
             return dt.strftime("%Y%m%dT0000")
-        except ValueError:
+        except ValueError as exc:
             try:
                 dt = datetime.strptime(date_input, "%Y-%m-%d %H:%M")
                 return dt.strftime("%Y%m%dT%H%M")
             except ValueError:
-                raise ValueError(f"Unsupported date format: {date_input}")
+                raise ValueError(f"Unsupported date format: {date_input}") from exc
     elif isinstance(date_input, datetime):
         return date_input.strftime("%Y%m%dT%H%M")
     else:
@@ -63,7 +64,7 @@ def _make_api_request(function_name: str, params: dict) -> dict | str:
         # Remove entitlement if it's None or empty
         api_params.pop("entitlement", None)
     
-    response = requests.get(API_BASE_URL, params=api_params)
+    response = requests.get(API_BASE_URL, params=api_params, timeout=30)
     response.raise_for_status()
 
     response_text = response.text

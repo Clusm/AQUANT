@@ -26,7 +26,6 @@ from tradingagents.quant.quant_picker import (
     pick,
 )
 
-
 console = Console()
 
 
@@ -88,12 +87,15 @@ def _print_terminal(result: dict) -> None:
         )
         if len(recs_sorted) > 5:
             strat_str += f"\n... 还有 {len(recs_sorted) - 5} 个"
+        # 老缓存无 win_rate 数据时 avg_win_rate 可能是 NaN,避免显示 "nan%"
+        wr = row["avg_win_rate"]
+        wr_str = f"{wr * 100:.1f}%" if pd.notna(wr) else "-"
         table.add_row(
             str(i + 1),
             code,
             str(int(row["n_strategies"])),
             f"{row['weighted_score']:.2f}",
-            f"{row['avg_win_rate'] * 100:.1f}%",
+            wr_str,
             f"{row['avg_holding_days']:.1f}",
             strat_str,
         )
@@ -109,7 +111,7 @@ def _print_terminal(result: dict) -> None:
         advice_table.add_column("入场建议", no_wrap=False)
 
         shown_codes = set()
-        for i, row in top.head(5).iterrows():
+        for _, row in top.head(5).iterrows():
             code = row["stock_code"]
             if code in shown_codes:
                 continue
@@ -156,14 +158,14 @@ def register_quant_pick(app: typer.Typer) -> None:
             None, "--today", "-t", help="选股日期 YYYY-MM-DD(默认今天)。",
         ),
         cache: str = typer.Option(
-            "daily_main_board_liquid", "--cache",
-            help="日线数据缓存文件名(不含 .parquet 后缀)。daily_main_board=全量(~3042股),daily_main_board_liquid=流动性前80%(~2433股,数据采集层已截断,推荐)。",
+            "daily_main_board", "--cache",
+            help="日线数据缓存文件名(不含 .parquet 后缀)。daily_main_board=全量主板(~3042股,默认,流动性/价格筛选在选股层执行);daily_main_board_liquid=流动性前80%(~2433股,数据采集层已截断)。",
         ),
         top_k: int = typer.Option(
             2, "--top-k", help="每个策略返回的前 N 只股票。",
         ),
         top_n: int = typer.Option(
-            20, "--top-n", help="最终返回 Top N 候选数。",
+            20, "--top-n", help="最终返回 Top N 候选数(5/10/20)。",
         ),
         workers: int = typer.Option(
             8, "--workers", "-w", help="并行 worker 数(Windows 必须 spawn,启动较慢)。",
@@ -188,7 +190,7 @@ def register_quant_pick(app: typer.Typer) -> None:
         fmt = output_format.lower()
         if fmt not in {"terminal", "json", "csv", "markdown"}:
             console.print(f"[red]无效的 output-format: {output_format}[/red]")
-            raise typer.Exit(code=2)
+            raise typer.Exit(code=2) from None
 
         if not no_progress:
             def progress(completed: int, total: int, latest: dict) -> None:
@@ -215,10 +217,10 @@ def register_quant_pick(app: typer.Typer) -> None:
         except FileNotFoundError as e:
             console.print(f"[red]缓存文件未找到: {e}[/red]")
             console.print(f"[dim]检查 {cache}.parquet 是否在 tradingagents/quant/outputs/cache/ 下[/dim]")
-            raise typer.Exit(code=3)
+            raise typer.Exit(code=3) from e
         except Exception as e:
             console.print(f"[red]量化选股失败: {type(e).__name__}: {e}[/red]")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from e
 
         # 输出
         out_file = _resolve_output_path(output_path, fmt, today_ts)

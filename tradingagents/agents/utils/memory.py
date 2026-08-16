@@ -1,12 +1,11 @@
 """Append-only markdown decision log for TradingAgents."""
 
-from typing import List, Optional
-from pathlib import Path
 import re
 import threading
+from pathlib import Path
+from typing import List, Optional
 
 from tradingagents.agents.utils.rating import parse_rating
-
 
 # Module-level lock guarding all writes to the shared memory log file.
 # In batch mode, N analysis threads each call store_decision() / atomic

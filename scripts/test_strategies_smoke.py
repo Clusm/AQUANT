@@ -20,14 +20,13 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from tradingagents.quant.backtest.portfolio import Portfolio
 from tradingagents.quant.data import cache as cm
-from tradingagents.quant.strategy.weekly_macd_golden_cross import WeeklyMacdGoldenCrossStrategy
+from tradingagents.quant.strategy.monthly_cmf_breakout import MonthlyCmfBreakoutStrategy
 from tradingagents.quant.strategy.monthly_macd_golden_cross import MonthlyMacdGoldenCrossStrategy
 from tradingagents.quant.strategy.monthly_rsi_breakout import MonthlyRsiBreakoutStrategy
 from tradingagents.quant.strategy.monthly_weekly_daily_resonance import MonthlyWeeklyDailyResonanceStrategy
+from tradingagents.quant.strategy.weekly_macd_golden_cross import WeeklyMacdGoldenCrossStrategy
 from tradingagents.quant.strategy.weekly_rsi_breakout import WeeklyRsiBreakoutStrategy
-from tradingagents.quant.strategy.monthly_cmf_breakout import MonthlyCmfBreakoutStrategy
 from tradingagents.quant.utils.trading_calendar import get_calendar
-
 
 STRATEGIES = [
     ("weekly_macd_golden_cross", WeeklyMacdGoldenCrossStrategy),

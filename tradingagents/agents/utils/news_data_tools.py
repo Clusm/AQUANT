@@ -1,6 +1,8 @@
-from langchain_core.tools import tool
-from typing import Annotated
 import re
+from typing import Annotated
+
+from langchain_core.tools import tool
+
 from tradingagents.dataflows.interface import route_to_vendor
 
 _A_STOCK_CODE_RE = re.compile(r"^\d{6}$")

@@ -1,31 +1,32 @@
 import datetime
-import typer
-from pathlib import Path
-from functools import wraps
-from rich.console import Console
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-load_dotenv(".env.enterprise", override=False)
-from rich.panel import Panel
-from rich.spinner import Spinner
-from rich.live import Live
-from rich.markdown import Markdown
-from rich.layout import Layout
-from rich.text import Text
-from rich.table import Table
-from collections import deque
 import time
+from collections import deque
+from functools import wraps
+from pathlib import Path
+
+import typer
+from dotenv import load_dotenv
 from rich import box
 from rich.align import Align
+from rich.console import Console
+from rich.layout import Layout
+from rich.live import Live
+from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.rule import Rule
+from rich.spinner import Spinner
+from rich.table import Table
+from rich.text import Text
 
-from tradingagents.graph.trading_graph import TradingAgentsGraph
-from tradingagents.default_config import DEFAULT_CONFIG
-from cli.utils import *
-from cli.announcements import fetch_announcements, display_announcements
+from cli.announcements import display_announcements, fetch_announcements
 from cli.stats_handler import StatsCallbackHandler
+from cli.utils import *
+from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+# Load environment variables before the interactive wizard reads provider keys.
+load_dotenv()
+load_dotenv(".env.enterprise", override=False)
 
 console = Console()
 
@@ -77,6 +78,7 @@ class MessageBuffer:
         self.report_sections = {}
         self.selected_analysts = []
         self._processed_message_ids = set()
+        self._report_update_order = []  # sections ordered by last update, for recency display
 
     def init_for_analysis(self, selected_analysts):
         """Initialize agent status and report sections based on selected analysts.
@@ -112,6 +114,7 @@ class MessageBuffer:
         self.messages.clear()
         self.tool_calls.clear()
         self._processed_message_ids.clear()
+        self._report_update_order = []
 
     def get_completed_reports_count(self):
         """Count reports that are finalized (their finalizing agent is completed).
@@ -150,6 +153,12 @@ class MessageBuffer:
     def update_report_section(self, section_name, content):
         if section_name in self.report_sections:
             self.report_sections[section_name] = content
+            # 记录真实的更新顺序:dict 迭代序=首次插入序,同一 section 被反复
+            # 更新(如 investment_plan 经 bull/bear/judge)不会移动位置,
+            # 直接扫 dict 会误判"最近"。每次更新把 section 移到列表末尾。
+            if section_name in self._report_update_order:
+                self._report_update_order.remove(section_name)
+            self._report_update_order.append(section_name)
             self._update_current_report()
 
     def _update_current_report(self):
@@ -157,11 +166,13 @@ class MessageBuffer:
         latest_section = None
         latest_content = None
 
-        # Find the most recently updated section
-        for section, content in self.report_sections.items():
+        # Find the most recently updated section (by update order, not dict order)
+        for section in reversed(self._report_update_order):
+            content = self.report_sections.get(section)
             if content is not None:
                 latest_section = section
                 latest_content = content
+                break
                
         if latest_section and latest_content:
             # Format the current section for display
@@ -1028,7 +1039,7 @@ def run_analysis(checkpoint: bool = False):
     # Now start the display layout
     layout = create_layout()
 
-    with Live(layout, refresh_per_second=4) as live:
+    with Live(layout, refresh_per_second=4):
         # Initial display
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
@@ -1167,7 +1178,7 @@ def run_analysis(checkpoint: bool = False):
 
         # Get final state and decision
         final_state = trace[-1]
-        decision = graph.process_signal(final_state["final_trade_decision"])
+        graph.process_signal(final_state["final_trade_decision"])
 
         # Update all agent statuses to completed
         for agent in message_buffer.agent_status:

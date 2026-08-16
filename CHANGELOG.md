@@ -6,6 +6,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes within the 0.x line are called out explicitly.
 
+## [0.4.0] — 2026-08-16
+
+发布前全面审计 + top18 终态策略库 + Web UI 主题统一 + 买入计划/持仓跟踪工作流。这是 v0.3.x 之后的发布候选版,重点解决"文档与代码事实不一致、事件池陈旧缓存、UI 样式散落"三类上线风险,并把 Web UI 从纯选股/分析工具升级为完整的"计划买入 → 持仓跟踪"闭环。
+
+### Added
+
+- **top18 终态策略库**(`strategy_library_final.py`):24 家族去底部 6,有效策略 18 个(S=5/A=11/B=2),指标口径 OOS 2025-01-01~2026-07-14。新增 `bull_align_ma20_bounce` / `continuous_strong_close` / `event_templates` / `factor_combo_rebalance` / `factor_ranked_event` / `fc_factors` / `long_consolidation_breakout_v2` / `monthly_breakout` / `volume_price_trend` / `weekly_adx_dmi_breakout` / `weekly_breakout_pullback` 等策略实现。
+- **统一 Web 主题**(`web/theme.py`):全局 CSS 与 HTML 小件收敛为设计令牌,主区 Hero、侧栏品牌卡、进度阶段卡、空状态卡统一;移除 Google Fonts 外部依赖,中文字体栈本地回退。
+- **事件池缓存指纹**(`event_templates.py`):缓存 key 增加日线数据内容指纹,增量更新后旧事件池自动失效,避免陈旧信号参与 factor_ranked_event。
+- **Universe-prune 策略提速**(`quant_picker.py`):主进程一次计算/复用各任务 top 300/500 股票池,worker 只对任务 universe 计算特征并跳过全市场预热。FC 因子策略(全市场截面 rank)自动排除,保持完整 universe。
+- **双 Pool 执行**(`quant_picker.py`):规则策略池 worker 释放全市场日线,FC 因子策略单独全市场 Pool,降低峰值内存。
+- **universe 列表持久化**(`quant_universe_cache=true`):按日线内容指纹 + ST/上市日期/日历缓存指纹 + 过滤参数签名缓存 top 300/500 代码列表,交易日不变时主进程不再重复计算。
+- **按需特征列**(`features/strategy_features.py` + `build_features_vectorized(columns=...)`):top18 规则策略声明真实需要的列,按依赖图只计算所需特征。top500 日线特征 5.8s -> 约 1s。
+- 实测 3042 股缓存、8 workers:冷缓存 **69s**、热缓存 **37s**、18/18 策略 0 错误;关闭优化回退路径 358s(4 workers),Top N 与 `all_records` 完全一致。
+- **缓存更新跨进程锁**(`quant/data/cache.py`):`update()` 的 read-old/merge/write 全流程加进程内 + 跨进程文件锁,并改为临时 parquet + `os.replace` 原子写;同 key 去重保留 last,重跑或并发更新不产生重复行、不互相覆盖。
+- **发布依赖补全**:`akshare>=1.16` / `python-dateutil>=2.9` 纳入主依赖;`adata` 独立为 `[quant-data]` 可选依赖。
+- `tests/test_event_pool_cache.py`:覆盖事件池数据指纹与缓存失效。
+- **买入计划 / 持仓跟踪**(`web/position_store.py` + `web/components/buy_plan.py` + `web/components/position_tracker.py`):Top N 候选表每行一键「计划买入」,计划详情展示命中策略的出场规则(信号出场 / 固定持仓 / 固定持仓 + 信号出场保护)、ATR 参数参考、次日涨跌停参考价,并自动关联 LLM 历史标签与置信分;确认买入后进入持仓跟踪,按 -5% 止损 / +8% 止盈 / 建议到期 / T+1 规则给出状态与预警。
+- **Web 7-tab 布局**:量化选股 / AI 深度分析 / 买入计划 / 持仓跟踪 / 交易记录与策略跟踪 / 综合推荐 / 历史,tab 统一为细线矢量图标(去掉 emoji);新增实盘交易收益与策略实际表现跟踪;Sidebar 移除量化参数区(Top N 固定 20、worker 固定 8),模型配置区仅保留数据源与 API Key,快速/深度模型内置为 DeepSeek-V4-Flash / DeepSeek-V4-Pro。
+- **模型数据源精简**:Web UI 仅保留 DeepSeek 官方与 OpenCode 中转两条数据源,API Key 优先使用侧边栏输入,回退 `DEEPSEEK_API_KEY` 环境变量。
+
+### Changed
+
+- 默认 Top N 统一固定为 **20**(Web/CLI/pipeline/`pick()` 四处一致)。
+- 默认日线缓存统一为 `daily_main_board` 全量主板;`daily_main_board_liquid` 作为可选降速项保留。
+- 股价上限默认调整为 70 元;新增当日涨停/跌停不入选过滤(`quant_exclude_limit_up_down=true`,按板块识别 10%/20% 幅度,发生在价格过滤之后、流动性排序之前)。
+- README / USAGE / NOTICE / CLAUDE 的策略数与版本事实统一为 18 策略 / v0.4.0。
+- `scripts/eval_recommendations.py` 移除硬编码 Windows 绝对路径,改为 `QUANT_CACHE_DIR` + 项目缓存目录自动探测。
+
+### Performance
+
+- 3042 股缓存、18 策略、8 workers 实测:冷缓存 **102s**(0 错误),事件池/页缓存命中后 **39s**;`prune_universe=false` 旧路径 4 workers 为 358s。两组 Top 10 与 `all_records` 行数逐项一致。
+
+### Fixed
+
+- `web/launch.py` 显式检查 `streamlit` 启动命令并返回真实退出码。
+- `web/components/report_viewer.py` 对历史报告中的信号/股票标签做 HTML 转义后再渲染。
+- `scripts/eval_recommendations.py` JSON 读取显式 UTF-8。
+- 量化层说明文案与 argparse/CLI 默认值不再残留 "10 个有效策略"。
+- `web/components/quant_pick.py` S/A/B/C 分级列合并短线 `n_{tier}` 与中线 `n_M_{tier}` 计数,修复中线命中时等级列显示为空。
+- 移除 Sidebar 嵌套 expander(Streamlit `Expanders may not be nested` 报错),OpenCode Base URL 与 API Key 改为独立 widget key 后再写 session_state。
+- LLM 历史日志补写 `final_signal_label` / `conviction_score` / `data_quality_summary`,`web/history.extract_signal` 优先读取新字段并对旧日志兼容。
+- 发布前复查修复:`买入计划/持仓跟踪` 同一计划在两个 tab 同时展开会触发 Streamlit 重复 form key(现按 tab 前缀隔离);历史 tab 不再重复渲染选股表,避免覆盖主 tab 勾选状态。
+- `web/position_store.py` 状态迁移(确认买入/放弃/卖出)改为单锁原子校验;损坏的 `plans.json` 自动备份后再重建;NaN 量化指标安全落盘;最新价在缓存缺该股时正确回退腾讯行情;持有天数改用交易日历,避免周末/节假日提前触发到期。
+- 主 tab 矢量图标通过 CSS `:not()` 限定主 Tab 作用域,避免误标报告页内部的多空/风控嵌套 tabs;PDF 封面信号改用文字标签(中文字体无 emoji 字形)并缓存 PDF 生成结果;`strip_think_tags` 兼容 `<thinking>` / `<think>` 标签对。
+- 策略优化记录固化:从 `stock_selector/strategy_combo_opt/outputs/cache/portfolio_metrics_v2_oos.json` 固化 18 个策略的 OOS 累计收益/回撤/Sharpe/盈亏比/卖出笔数/平均持仓,买入计划「命中策略与出场规则」展示该回测口径;入场建议中的 `均收+154.61%` 错误标签统一更正为 `OOS累计收益+154.6%`。
+- 买入计划出场规则增加初学者可读建议:ATR 止损/移动止盈触发条件、保本 kill 语义、信号出场 vs 固定持仓执行差异、因子组合策略的小资金适用性提示;买入计划与持仓跟踪改为 `st.fragment`,状态筛选切换不再重跑整页。
+- LLM 管线优化:vendor 工具结果 180s 进程级缓存(7 个分析师重复请求同一数据时只请求一次);Conflict Resolver 增加中文评级解析(如「最终评级:减持 (Underweight)」),减少 Unknown 样本;本地 44 条历史信号回测显示置信分 61-100 组 5/10 日前向收益优于低置信组,管线整体方向有效但强买样本仍少。
+- 数据源兜底:`get_insider_transactions` 兼容 mootdx F10 返回 dict 的情况(历史报告里最高频失败项);`get_fund_flow` 增加新浪资金流备用源;`get_industry_comparison` 增加新浪行业板块备用源;三大财务报表在 Sina 为空时自动切换东财 datacenter;`get_fundamentals` 增加东财前十大股东数据。
+- 批量分析重试不再丢失其它 tracker;AI 分析 tab 增加「重试失败任务」按钮,合并保留已完成/运行中任务。
+- Sidebar 移除「分析日期」和快速/深度模型选择;模型固定 DeepSeek-V4-Flash / DeepSeek-V4-Pro;API Key 持久化到 `~/.tradingagents/web_config.json`,重启自动恢复;非 ASCII API Key/网关地址提前给出明确中文报错,不再抛 httpx `'ascii' codec` 异常。
+
+### Tested
+
+- `pytest tests/` **384 passed + 44 subtests,1 skipped**(新增事件池缓存、主题、universe-prune、缓存锁、买入计划/持仓跟踪、tab 图标测试后本版实跑)。
+- Streamlit AppTest:`exceptions=0`,7 个主 tab 及嵌套报告 tabs 全部正常渲染(覆盖重复 widget key / 计划详情 / 持仓详情 / 批量重试保留 tracker 场景)。
+
 ## [0.3.1] — 2026-08-09
 
 上线前审计(AUDIT_REPORT.md)v0.3.1 跟进清单收尾:补齐 8 个新模块的剩余单元测试 + 清理 P2/P3 遗留项。

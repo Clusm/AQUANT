@@ -47,7 +47,7 @@ def get_history() -> list[dict[str, str]]:
     Each entry: {"ticker": "300750", "date": "2026-05-12", "path": "/abs/path/...json"}
 
     Cached for 30s via st.cache_data - the rglob scan was showing up as
-    noticeable lag on every Streamlit rerun (all 4 tabs render even when
+    noticeable lag on every Streamlit rerun (all 7 tabs render even when
     only one is visible). Cache is cleared by _clear_history_cache()
     after save_recommendation / save_quant_pick / clear_incomplete_task.
     """
@@ -248,8 +248,22 @@ def load_analysis(path: str) -> dict[str, Any]:
 
 
 def extract_signal(state: dict[str, Any]) -> str:
-    """Extract the short signal (Buy/Sell/Hold) from a final state dict."""
+    """Extract the short signal from a final state dict.
+
+    v0.4.1 起优先读取 Conflict Resolver 的四档标签;旧日志无该字段时
+    继续回退到 BUY/SELL/HOLD 关键字。
+    """
     import re
+
+    label = state.get("final_signal_label")
+    if label and str(label).strip():
+        return str(label).strip()
+
+    ranked = state.get("final_ranked_decision")
+    if ranked:
+        m = re.search(r"标签\s*[:：]\s*([^\n]+)", str(ranked))
+        if m:
+            return m.group(1).strip()
 
     for field in (
         "investment_plan",

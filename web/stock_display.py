@@ -6,10 +6,20 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from web.theme import SIGNAL
+
 
 def strip_think_tags(text: str) -> str:
-    """Remove  thinking... response blocks from LLM output."""
-    return re.sub(r" thinking.*? response\s*", "", text, flags=re.DOTALL).strip()
+    """Remove reasoning blocks from LLM output.
+
+    Handles three formats seen across providers/models:
+      - ``<thinking>...</thinking>`` / ``<think>...</think>`` tag pairs
+      - DeepSeek-style `` thinking... response`` token pairs
+    """
+    cleaned = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r" thinking.*? response\s*", "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
 
 
 def signal_style(signal: str) -> tuple[str, str]:
@@ -22,18 +32,18 @@ def signal_style(signal: str) -> tuple[str, str]:
     kept for old saved data before the 4-tier label was introduced.
     """
     if "🟢" in signal or "强买" in signal:
-        return "#22c55e", "强买"
+        return SIGNAL["strong_buy"], "强买"
     if "🟡" in signal or "关注" in signal:
-        return "#eab308", "关注"
+        return SIGNAL["watch"], "关注"
     if "🟠" in signal or "冲突" in signal:
-        return "#f97316", "冲突"
+        return SIGNAL["conflict"], "冲突"
     if "🔴" in signal or signal.endswith("弃"):
-        return "#ef4444", "弃"
+        return SIGNAL["discard"], "弃"
     s = signal.upper()
     if "BUY" in s:
-        return "#22c55e", "买入"
+        return SIGNAL["strong_buy"], "买入"
     if "SELL" in s:
-        return "#ef4444", "卖出"
+        return SIGNAL["discard"], "卖出"
     return "#fbbf24", "持有"
 
 

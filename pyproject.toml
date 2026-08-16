@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tradingagents-quant"
-version = "0.3.0"
+version = "0.4.0"
 description = "A股多Agent投研框架 — 量化前置筛选 + LLM 深度分析双层架构"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,9 +18,11 @@ dependencies = [
     "langchain-openai>=0.3.23",
     "langgraph>=0.4.8",
     "langgraph-checkpoint-sqlite>=2.0.0",
+    "akshare>=1.16",
     "pandas>=2.3.0",
     "numpy>=1.24",
     "pyarrow>=14.0",
+    "python-dateutil>=2.9",
     "pytz>=2025.2",
     "questionary>=2.1.0",
     "requests>=2.32.4",
@@ -45,6 +47,7 @@ Changelog = "https://github.com/simonlin1212/TradingAgents-astock/blob/main/CHAN
 
 [project.optional-dependencies]
 google = ["langchain-google-genai>=4.0.0"]
+quant-data = ["adata>=2.9"]
 test = ["pytest>=7.4"]
 
 [project.scripts]
@@ -68,3 +71,16 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E402", "E501", "F403", "F405"]
+
+[tool.ruff.lint.per-file-ignores]
+"tradingagents/agents/utils/agent_utils.py" = ["F401"]  # 工具函数集中 re-export
+"tradingagents/dataflows/alpha_vantage.py" = ["F401"]   # vendor 工具集中 re-export
+"scripts/archive/*" = ["E402", "E741", "F401", "F841"]

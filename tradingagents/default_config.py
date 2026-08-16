@@ -23,6 +23,8 @@ DEFAULT_CONFIG = {
     # provider-specific URL here would leak (e.g. OpenAI's /v1 was previously
     # being forwarded to Gemini, producing malformed request URLs).
     "backend_url": None,
+    # Web UI 模型配置输入框填写的 API Key(留空时各 provider 从环境变量读取)。
+    "llm_api_key": None,
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.
     "openai_reasoning_effort": None,    # "medium", "high", "low"
@@ -61,23 +63,30 @@ DEFAULT_CONFIG = {
     # before LLM analysts and injects Top N context
     "quant_layer_enabled": True,
     # Cache file name for daily OHLCV data (sina_fetcher format)
-    # daily_main_board = 全量主板(~3042 股,慢)
-    # daily_main_board_liquid = 流动性前 80%(~2433 股,数据采集层已按成交额截断,推荐)
-    "quant_daily_cache_name": "daily_main_board_liquid",
+    # 数据层每次更新全部主板,流动性/价格筛选只在选股层(filter_universe_topk)执行
+    # - daily_main_board = 全量主板(~3042 股,数据更新层默认,慢但覆盖广)
+    # - daily_main_board_liquid = 流动性前 80%(~2129 股,数据采集层已按成交额截断)
+    "quant_daily_cache_name": "daily_main_board",
     # Universe 过滤参数(v0.3.0 新增):
     # 价格过滤(在 ST/上市天数/停牌过滤之后,流动性排序之前应用)
     # - quant_price_min: 最低股价,过滤低价股(ST/退市风险集中区)
-    # - quant_price_max: 最高股价,过滤高价股(实盘参与门槛高)
-    # 流动性过滤:按 20 日均成交额排序,保留前 quant_liquidity_percentile
-    # - 1.0 = 不做 percentile 截断(数据采集层已按流动性前 80% 截断,策略层无需再砍)
-    # - 0.8 = 砍掉流动性最差 20%(仅在用 daily_main_board 全量 cache 时有意义)
+    # - quant_price_max: 最高股价,过滤高价股(小资金账户一手成本控制;5万以内建议 <=50,当前 70)
+    # 流动性过滤(legacy fallback):按 20 日均成交额排序,保留前 N%。
+    # 仅 filter_universe_topk(topk=None, percentile=None) 回退路径读取。
+    # v0.4.0 top18 终态库的每个策略都显式传 universe_topk=300/500,
+    # 比 0.8(约 2400 只)更严格,因此该值不参与当前生产选股。
     "quant_price_min": 3.0,
-    "quant_price_max": 80.0,
-    "quant_liquidity_percentile": 1.0,
-    # Default number of Top N candidates to deep-analyze.
-    # Options: 5, 10, 20. Default 10 (balance of coverage vs LLM API cost;
-    # 20 tends to drain DeepSeek quota for new users).
-    "quant_top_n_default": 10,
+    "quant_price_max": 70.0,
+    "quant_liquidity_percentile": 0.8,
+    # 当日收盘价处于涨停价/跌停价的股票不进入 universe。
+    # 用 pre_close 计算精确涨跌停价(主板 10%,创业/科创 20%);缺 pre_close
+    # 时回退到 change_pct 阈值。该过滤在价格过滤之后、流动性排序之前执行。
+    "quant_exclude_limit_up_down": True,
+    # universe 列表持久化:交易日/日线数据/ST/上市日期/日历未变化时,
+    # 直接复用上次计算的 top 300/500 代码列表,省掉主进程 filter_universe_topk。
+    "quant_universe_cache": True,
+    # Top N 固定为 20(Web UI 不再暴露量化选股配置)。
+    "quant_top_n_default": 20,
     # Number of parallel workers for strategy execution (multiprocessing spawn)
     "quant_n_workers": 8,
     # Slice days for strategy data (0 = full history, 350 = recommended mixed slice)
@@ -86,4 +95,11 @@ DEFAULT_CONFIG = {
     "quant_top_k_per_strategy": 2,
     # Compare LLM (defer - not implemented, kept for future)
     "quant_compare_llm_enabled": False,
+    # Performance: prune each worker's daily DataFrame down to that task's
+    # universe (top 300/500) before feature precomputation. Rule-based
+    # strategies compute identical signals because cross-sectional scoring
+    # happens after universe filtering; FC factor strategies are excluded
+    # internally and keep the full universe. Set false to restore the old
+    # full-universe feature warm-up path.
+    "quant_universe_prune": True,
 }

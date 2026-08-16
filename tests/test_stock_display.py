@@ -123,3 +123,16 @@ def test_normalize_report_state_mentions_updates_generated_fields(monkeypatch):
     assert state["investment_debate_state"]["bull_history"] == "看多 600370 *ST三房"
     assert state["investment_debate_state"]["round"] == 1
     assert state["risk_debate_state"]["judge_decision"] == "600370 *ST三房 风险偏高"
+
+class TestStripThinkTags:
+    def test_removes_angle_tag_blocks(self):
+        text = "前文<thinking>思考过程</thinking>后文"
+        assert stock_display.strip_think_tags(text) == "前文后文"
+
+    def test_removes_think_short_tag_blocks(self):
+        text = "前文<think>reasoning</think>后文"
+        assert stock_display.strip_think_tags(text) == "前文后文"
+
+    def test_keeps_legacy_deepseek_token_pair_behavior(self):
+        text = "Before  thinking...Let me analyze.  response After"
+        assert stock_display.strip_think_tags(text) == "Before After"

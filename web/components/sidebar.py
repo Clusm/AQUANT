@@ -2,34 +2,31 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date
 
 import streamlit as st
 
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.checkpointer import clear_checkpoint
-from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
 from web.history import (
     clear_incomplete_task,
     get_history,
     get_incomplete_history,
     record_incomplete_task,
 )
+from web.theme import BRAND_GRADIENT, MUTED, SURFACE_2, TEXT
+from web.user_config import load_user_config, save_user_config
 
-# Provider display names in recommended order. 默认 DeepSeek(国内直连首选),
-# 其余为可回退项——配好对应环境变量即可切换(见 openai_client._PROVIDER_CONFIG)。
-_PROVIDERS: list[tuple[str, str]] = [
-    ("DeepSeek", "deepseek"),
-    ("OpenAI", "openai"),
-    ("Anthropic", "anthropic"),
-    ("Qwen 通义", "qwen"),
-    ("GLM 智谱", "glm"),
-    ("MiniMax", "minimax"),
-    ("Ollama 本地", "ollama"),
+# 模型数据源:按用户要求只保留 DeepSeek 官方与 OpenCode 中转。
+# 两者都使用 DeepSeek 模型目录;OpenCode 仅把 base_url 指向中转网关。
+_GATEWAYS: list[tuple[str, str]] = [
+    ("DeepSeek 官方", "deepseek_official"),
+    ("OpenCode 中转", "opencode"),
 ]
 
-_PROVIDER_DISPLAY = [name for name, _ in _PROVIDERS]
-_PROVIDER_KEYS = [key for _, key in _PROVIDERS]
+_GATEWAY_DISPLAY = [name for name, _ in _GATEWAYS]
+_GATEWAY_KEYS = [key for _, key in _GATEWAYS]
 
 
 def _resolve_user_input(raw: str) -> tuple[str, str | None]:
@@ -156,117 +153,96 @@ def _render_analysis_controls(raw_ticker: str, trade_date_value: date) -> None:
 
 
 def _render_llm_config() -> None:
-    """Render LLM provider and model selection controls."""
+    """Render LLM data-source controls.
 
-    provider_idx = st.selectbox(
-        "LLM 供应商",
-        range(len(_PROVIDERS)),
-        format_func=lambda i: _PROVIDER_DISPLAY[i],
-        key="llm_provider_idx",
-        help="选择你配置了 API Key 的供应商",
+    Model selection is intentionally hidden: quick/deep models are pinned to
+    DeepSeek-V4-Flash / DeepSeek-V4-Pro in web/app_main.py ``_build_config()``.
+    Data source / API Key / OpenCode URL are persisted in
+    ~/.tradingagents/web_config.json so a Streamlit restart keeps them.
+    """
+    saved = load_user_config()
+
+    # 首次进入页面时恢复上次选择(已有 session_state 时不做覆盖)
+    saved_gateway = saved.get("llm_gateway")
+    if "llm_gateway_idx" not in st.session_state and saved_gateway in _GATEWAY_KEYS:
+        st.session_state["llm_gateway_idx"] = _GATEWAY_KEYS.index(saved_gateway)
+    if "llm_api_key" not in st.session_state:
+        st.session_state["llm_api_key"] = saved.get("llm_api_key", "")
+    if "opencode_base_url_input" not in st.session_state:
+        st.session_state["opencode_base_url_input"] = (
+            saved.get("llm_base_url") or os.getenv("BACKEND_URL") or ""
+        )
+
+    _current = st.session_state.get("llm_gateway_idx")
+    if not isinstance(_current, int) or not 0 <= _current < len(_GATEWAYS):
+        st.session_state["llm_gateway_idx"] = 0
+
+    gateway_idx = st.selectbox(
+        "模型数据源",
+        range(len(_GATEWAYS)),
+        format_func=lambda i: _GATEWAY_DISPLAY[i],
+        key="llm_gateway_idx",
+        help="DeepSeek 官方=直连官方地址;OpenCode 中转=使用你的 OpenCode Go 网关",
     )
-    provider_key = _PROVIDER_KEYS[provider_idx]
-    st.session_state["llm_provider"] = provider_key
-
-    if provider_key in MODEL_OPTIONS:
-        quick_options = MODEL_OPTIONS[provider_key]["quick"]
-        deep_options = MODEL_OPTIONS[provider_key]["deep"]
-
-        quick_labels = [label for label, _ in quick_options]
-        quick_values = [value for _, value in quick_options]
-        deep_labels = [label for label, _ in deep_options]
-        deep_values = [value for _, value in deep_options]
-
-        quick_idx = st.selectbox(
-            "快速思考模型",
-            range(len(quick_options)),
-            format_func=lambda i: quick_labels[i],
-            key="quick_model_idx",
-            help="用于常规分析任务，速度优先",
-        )
-        st.session_state["quick_think_llm"] = quick_values[quick_idx]
-
-        deep_idx = st.selectbox(
-            "深度思考模型",
-            range(len(deep_options)),
-            format_func=lambda i: deep_labels[i],
-            key="deep_model_idx",
-            help="用于辩论/决策等需要深度推理的任务",
-        )
-        st.session_state["deep_think_llm"] = deep_values[deep_idx]
-    else:
-        custom_quick = st.text_input("快速思考模型 ID", key="custom_quick_model")
-        custom_deep = st.text_input("深度思考模型 ID", key="custom_deep_model")
-        st.session_state["quick_think_llm"] = custom_quick
-        st.session_state["deep_think_llm"] = custom_deep
+    gateway_key = _GATEWAY_KEYS[gateway_idx]
+    st.session_state["llm_gateway"] = gateway_key
+    # 无论官方还是中转,模型都是 DeepSeek 目录
+    st.session_state["llm_provider"] = "deepseek"
+    if saved.get("llm_gateway") != gateway_key:
+        save_user_config({"llm_gateway": gateway_key})
 
     st.text_input(
-        "API Base URL（第三方/代理，可选）",
-        key="llm_base_url",
-        placeholder="例: https://your-proxy.com/v1",
-        help=(
-            "通过第三方中转/代理访问模型时填写网关地址；"
-            "留空则用所选供应商的官方地址。"
-            "API Key 从 .env 读取:DeepSeek=DEEPSEEK_API_KEY、"
-            "OpenAI=OPENAI_API_KEY、Anthropic=ANTHROPIC_API_KEY、"
-            "Qwen=DASHSCOPE_API_KEY、GLM=ZHIPU_API_KEY、MiniMax=MINIMAX_API_KEY、"
-            "Ollama=本地无需 key。也可在 .env 里设 BACKEND_URL 代替此处。"
-        ),
+        "API Key",
+        key="llm_api_key",
+        type="password",
+        placeholder="留空则读取 .env 的 DEEPSEEK_API_KEY",
+        help="保存在本机 ~/.tradingagents/web_config.json,重启后自动恢复。",
     )
+    api_key_value = st.session_state.get("llm_api_key") or ""
+    if api_key_value and not api_key_value.isascii():
+        st.error("API Key 包含中文/空格等非 ASCII 字符,请重新粘贴完整的 key。")
+        api_key_value = ""
+        st.session_state["llm_api_key"] = ""
+    if saved.get("llm_api_key") != api_key_value:
+        save_user_config({"llm_api_key": api_key_value})
 
-
-def _render_quant_config() -> None:
-    """Render quant pick layer controls (Top N, workers, cache)."""
-
-    from tradingagents.quant.strategy.strategy_library_final import get_all_strategies_final
-    _n_strats = len(get_all_strategies_final())
-
-    st.selectbox(
-        "Top N 候选",
-        options=["10", "20", "5"],
-        key="quant_top_n",
-        help=f"{_n_strats} 策略最终返回 Top N 候选数。10=默认(平衡覆盖与 API 成本),5=快速验证,20=最大覆盖。",
-    )
-
-    st.number_input(
-        "并行 worker 数",
-        min_value=1,
-        max_value=16,
-        value=8,
-        step=1,
-        key="quant_n_workers",
-        help="multiprocessing.Pool 大小（Windows spawn，启动较慢）。",
-    )
-
-    st.selectbox(
-        "日线缓存",
-        options=[
-            "daily_main_board_liquid",
-            "daily_main_board",
-        ],
-        key="quant_daily_cache",
-        help=(
-            "daily_main_board_liquid=流动性前 80%(~2433 股,数据采集层已截断,推荐);"
-            "daily_main_board=全量主板(~3042 股,慢但覆盖广)。"
-        ),
-    )
+    if gateway_key == "opencode":
+        default_base = os.getenv("BACKEND_URL", "")
+        entered = st.text_input(
+            "OpenCode 网关地址",
+            key="opencode_base_url_input",
+            placeholder="例: https://opencode.ai/proxy/v1",
+            help=(
+                "填写 OpenCode Go 套餐的网关地址,留空则读取 .env 的 BACKEND_URL。"
+                "API Key 使用 DEEPSEEK_API_KEY(即你的 OpenCode Go key)。"
+            ),
+        )
+        st.session_state["llm_base_url"] = entered or default_base
+        if saved.get("llm_base_url") != (entered or ""):
+            save_user_config({"llm_base_url": entered or ""})
+    else:
+        st.session_state["llm_base_url"] = ""
 
 
 def render_sidebar() -> None:
     """Render the sidebar with input controls and history."""
 
     st.markdown(
-        """
-        <div style="text-align:center; margin-bottom:1.5rem;">
-            <span style="font-size:2rem; font-weight:800; color:#ff5a1f;">Aquant</span><span style="font-size:2rem; font-weight:800; color:#f5f1eb;">投研工具</span>
-            <div style="font-size:0.85rem; color:#888; margin-top:0.2rem;">
+        f"""
+        <div style="text-align:center; margin-bottom:1.2rem; background:{SURFACE_2};
+                    border:1px solid #2a2a2a; border-radius:16px; padding:1.1rem 0.7rem 0.9rem;">
+            <div style="font-size:1.7rem; font-weight:900; letter-spacing:-0.01em;">
+                <span style="background:{BRAND_GRADIENT};-webkit-background-clip:text;
+                             background-clip:text;color:transparent;">Aquant</span>
+                <span style="color:{TEXT};">投研工具</span>
+            </div>
+            <div style="font-size:0.82rem; color:{MUTED}; margin-top:0.35rem;">
                 A股多Agent投研系统
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
     st.markdown("---")
     st.markdown("#### 新建分析")
 
@@ -282,17 +258,11 @@ def render_sidebar() -> None:
         help="输入6位A股代码或中文股票全称",
     )
 
-    trade_date = st.date_input(
-        "分析日期",
-        value=date.today(),
-        key="input_date",
-    )
+    # 分析日期不再提供人工选择:统一使用今天(量化层会按缓存最新日期自动回退)。
+    trade_date = date.today()
 
     with st.expander("⚙️ 模型配置", expanded=False):
         _render_llm_config()
-
-    with st.expander("📊 量化选股配置", expanded=False):
-        _render_quant_config()
 
     tracker = st.session_state.get("tracker")
     is_busy = tracker is not None and tracker.is_running

@@ -5,7 +5,6 @@ import pandas as pd
 
 from tradingagents.quant.data import cache as cache_mod
 
-
 _ST_CACHE: pd.DataFrame | None = None
 _ST_BY_DATE: dict | None = None
 _ST_BY_CODE: dict | None = None

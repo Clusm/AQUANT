@@ -1,6 +1,7 @@
 # TradingAgents/graph/setup.py
 
 from typing import Any, Dict
+
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -29,7 +30,8 @@ class GraphSetup:
         self.config = config  # Optional; Quant Picker reads quant_layer_enabled from here or DEFAULT_CONFIG
 
     def setup_graph(
-        self, selected_analysts=["market", "social", "news", "fundamentals", "policy", "hot_money", "lockup"]
+        self,
+        selected_analysts: list[str] | None = None,
     ):
         """Set up and compile the agent workflow graph.
 
@@ -43,6 +45,8 @@ class GraphSetup:
                 - "hot_money": Hot money / capital flow tracker (A-stock specific)
                 - "lockup": Lockup expiry / reduction watcher (A-stock specific)
         """
+        if selected_analysts is None:
+            selected_analysts = ["market", "social", "news", "fundamentals", "policy", "hot_money", "lockup"]
         if len(selected_analysts) == 0:
             raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
 

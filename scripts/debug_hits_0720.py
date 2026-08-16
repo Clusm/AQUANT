@@ -77,7 +77,7 @@ def main() -> int:
     # 统计每只股票被多少策略命中
     from collections import Counter
     cnt = Counter(h["code"] for h in all_hits)
-    print(f"\n股票命中数排名(被多策略命中 = 信号更强):")
+    print("\n股票命中数排名(被多策略命中 = 信号更强):")
     for code, n in cnt.most_common():
         strats = [h["strategy"].replace("M_", "").replace("ZZ_", "") for h in all_hits if h["code"] == code]
         print(f"  {code}  被 {n} 个策略命中  策略: {strats}")

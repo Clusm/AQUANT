@@ -2,7 +2,7 @@
 
 设计:
 - daemon 线程,Streamlit 启动时触发一次
-- daily 缓存(quant_daily_cache_name,默认 daily_main_board_liquid)已存在
+- daily 缓存(quant_daily_cache_name,默认 daily_main_board 全量主板)已存在
   -> increment_data 增量更新最新交易日(快,几秒到几分钟)
 - daily 缓存不存在 -> 跳过,提示用户先手动跑 download_all 构建基础数据
   (全量构建 15-20 分钟,不适合放在启动自动流程里)
@@ -24,11 +24,10 @@ import pandas as pd
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.quant.data import cache as cm
 
-
 # 与 pick()/quant_picker_node 保持一致:读配置 quant_daily_cache_name
-# (默认 daily_main_board_liquid)。此前硬编码 daily_main_board 会导致后台
-# 自动增量更新与策略实际读取的缓存不一致(只在用户切到全量 cache 时才对)。
-CACHE_NAME = DEFAULT_CONFIG.get("quant_daily_cache_name", "daily_main_board_liquid")
+# (默认 daily_main_board 全量主板)。后台自动增量覆盖全部主板股票,
+# 流动性/价格筛选只在选股层执行,不再依赖"数据采集层已截断"的 liquid 缓存。
+CACHE_NAME = DEFAULT_CONFIG.get("quant_daily_cache_name", "daily_main_board")
 INDEX_CACHE_NAME = "index_000001"
 
 _LOCK = threading.Lock()
@@ -98,7 +97,8 @@ def _run() -> None:
                     f"未找到 {CACHE_NAME}.parquet,跳过自动增量。"
                     "请先手动跑 download_all 构建基础数据:"
                     f" python -c \"from tradingagents.quant.data.fetcher import download_all; "
-                    f"download_all('2022-01-01', '2026-07-22', percentile=1.0, cache_name='{CACHE_NAME}', max_workers=32)\""
+                    f"download_all('2022-01-01', '{datetime.now():%Y-%m-%d}', "
+                    f"percentile=1.0, cache_name='{CACHE_NAME}', max_workers=32)\""
                 ),
                 finished_at=datetime.now().isoformat(),
                 progress=0,
@@ -121,7 +121,8 @@ def _run() -> None:
 def _run_incremental() -> None:
     """对已存在的 daily 缓存 parquet 做增量更新。"""
     from tradingagents.quant.data_update import (
-        check_cache_freshness, increment_data,
+        check_cache_freshness,
+        increment_data,
     )
 
     daily_df = cm.load(CACHE_NAME)

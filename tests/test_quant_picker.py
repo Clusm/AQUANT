@@ -8,14 +8,17 @@ import pytest
 
 from tradingagents.quant.quant_picker import (
     _aggregate,
+    _build_universe_groups,
+    _can_prune_universe,
     _compute_entry_advice,
+    _module_name,
+    _task_universe_topk,
     compute_top_n,
     format_top_picks_summary,
     get_tier_of,
     needs_full_data,
     pick,
 )
-
 
 # ============================================================
 # _compute_entry_advice:入场建议生成
@@ -29,7 +32,7 @@ class TestComputeEntryAdvice:
         }
         advice, holding = _compute_entry_advice(info)
         assert holding == 5
-        assert "买:次日09:30开盘买入。短线5日,胜率60.0%/均收+25.00%" in advice
+        assert "买:次日09:30开盘买入。短线5日,胜率60.0%/OOS累计收益+25.0%" in advice
         assert "高开≥5%不买(追高风险)" in advice
         assert "低开≤-5%接近基线,谨慎可买" in advice
 
@@ -41,7 +44,7 @@ class TestComputeEntryAdvice:
         advice, holding = _compute_entry_advice(info)
         assert holding == 15
         assert "买:次日10:00后,9:30-10:00收阳且10:00价在30min VWAP -1%~0%" in advice
-        assert "中线15日,胜率70.0%/均收+225.97%" in advice
+        assert "中线15日,胜率70.0%/OOS累计收益+226.0%" in advice
 
     def test_holding_days_none_defaults_to_short_5(self):
         advice, holding = _compute_entry_advice({})
@@ -51,13 +54,13 @@ class TestComputeEntryAdvice:
     def test_zero_win_rate_and_return_shows_na(self):
         info = {"holding_days": 10, "new_performance": {}}
         advice, holding = _compute_entry_advice(info)
-        assert "胜率N/A/均收N/A" in advice
+        assert "胜率N/A/OOS累计收益N/A" in advice
 
     def test_no_new_performance_key(self):
         info = {"holding_days": 3}
         advice, _ = _compute_entry_advice(info)
         assert "短线3日" in advice
-        assert "胜率N/A/均收N/A" in advice
+        assert "胜率N/A/OOS累计收益N/A" in advice
 
 
 # ============================================================
@@ -97,7 +100,8 @@ class TestGetTierOf:
     @pytest.mark.parametrize("name,tier,expected", [
         # 真实中线策略:holding_days>5,加 M_ 前缀
         ("M_mwd_res_loose", "S", "M_S"),
-        ("M_m_rsi_bo_loose", "A", "M_A"),
+        ("M_m_macd_gc_default", "A", "M_A"),
+        ("M_m_rsi_bo_strict", "B", "M_B"),
     ])
     def test_real_midline_strategies(self, name, tier, expected):
         assert get_tier_of(name, {"holding_days": 15}) == expected
@@ -236,3 +240,111 @@ class TestPickValidation:
         monkeypatch.setattr(config, "_CACHE_DIR", tmp_path)
         with pytest.raises(FileNotFoundError):
             pick(today=pd.Timestamp("2026-07-17"), strategies={}, top_n=ok_top_n)
+
+
+# ============================================================
+# universe-prune 数据选择纯函数
+# ============================================================
+
+class TestUniversePruneHelpers:
+    def test_module_name(self):
+        assert _module_name({"module": "tradingagents.quant.strategy.factor_combo_rebalance"}) == "factor_combo_rebalance"
+
+    def test_factor_modules_never_prune(self):
+        for module in ("factor_combo_rebalance", "factor_ranked_event"):
+            assert _can_prune_universe({"module": f"x.{module}"}) is False
+        assert _can_prune_universe({"module": "x.weekly_macd_golden_cross"}) is True
+
+    @pytest.mark.parametrize("params,expected", [
+        ({}, 500),
+        ({"universe_topk": 300}, 300),
+        ({"universe_topk": "500"}, 500),
+        ({"universe_topk": None}, 500),
+        ({"universe_topk": "bad"}, 500),
+    ])
+    def test_task_universe_topk(self, params, expected):
+        assert _task_universe_topk({"params": params}) == expected
+
+    def test_build_universe_groups_skips_factor_tasks(self, monkeypatch, tmp_path):
+        from tradingagents.quant import config
+
+        monkeypatch.setattr(config, "_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(config, "_OUTPUT_DIR", tmp_path)
+        calls = []
+
+        def fake_filter(daily_df, *, on_date, topk):
+            calls.append(topk)
+            return [f"{i:06d}" for i in range(topk)]
+
+        monkeypatch.setattr(
+            "tradingagents.quant.data.universe.filter_universe_topk",
+            fake_filter,
+            raising=False,
+        )
+        strategies = {
+            "rule_500": {"module": "x.weekly_macd_golden_cross", "params": {}},
+            "rule_300": {"module": "x.volume_price_trend", "params": {"universe_topk": 300}},
+            "fc": {"module": "x.factor_combo_rebalance", "params": {"universe_topk": 300}},
+        }
+        groups = _build_universe_groups(pd.DataFrame(), strategies, pd.Timestamp("2026-01-02"))
+        assert set(groups) == {300, 500}
+        assert groups[500][:5] == [f"{i:06d}" for i in range(5)]
+        assert calls == [300, 500]
+
+
+class TestActiveLibraryUniverse:
+    def test_all_active_strategies_pin_topk_not_percentile_fallback(self):
+        """top18 库不允许依赖 quant_liquidity_percentile 回退;每个策略必须显式 300/500。"""
+        import importlib
+        import inspect
+
+        from tradingagents.quant.strategy.strategy_library_final import get_all_strategies_final
+
+        for name, info in get_all_strategies_final().items():
+            cls = getattr(importlib.import_module(info["module"]), info["class"])
+            default = inspect.signature(cls.__init__).parameters["universe_topk"].default
+            assert default in (300, 500), (name, default)
+            topk = _task_universe_topk(info)
+            assert topk in (300, 500), (name, topk)
+
+
+class TestUniverseGroupCache:
+    def test_build_universe_groups_reuses_disk_cache(self, monkeypatch, tmp_path):
+        from tradingagents.quant import config
+
+        monkeypatch.setattr(config, "_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(
+            "tradingagents.quant.data.universe.filter_universe_topk",
+            lambda daily_df, *, on_date, topk: [f"{600000 + i}" for i in range(topk)],
+            raising=False,
+        )
+        strategies = {
+            "rule": {"module": "x.weekly_macd_golden_cross", "params": {}},
+        }
+        daily = pd.DataFrame({
+            "stock_code": ["600000", "600001"],
+            "trade_date": pd.to_datetime(["2026-01-01", "2026-01-02"]),
+            "close": [10.0, 10.1],
+        })
+        today = pd.Timestamp("2026-01-02")
+
+        first = _build_universe_groups(daily, strategies, today, cache_name="test_cache")
+        second = _build_universe_groups(daily, strategies, today, cache_name="test_cache")
+        assert first == {500: [f"{600000 + i}" for i in range(500)]}
+        assert second == first
+
+        # 内容变化后应重新计算,不会命中旧缓存
+        daily2 = daily.copy()
+        daily2.loc[daily2.index[-1], "close"] = 11.0
+        third = _build_universe_groups(daily2, strategies, today, cache_name="test_cache")
+        assert third == first
+
+
+class TestStrategyLibraryLogicWording:
+    def test_champion_logic_clarifies_total_return_is_not_per_hold(self):
+        from tradingagents.quant.strategy.strategy_library_final import get_all_strategies_final
+
+        info = get_all_strategies_final()["opt_M_w_bo_pb_loose_champion_exitmin3"]
+        assert "不是单笔或持有期平均收益" in info["logic"]
+        assert "累计收益" in info["logic"]
+        assert "154.6%" in info["logic"]

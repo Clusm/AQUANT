@@ -1,6 +1,6 @@
 """统计 universe 过滤各阶段后的股票数。
 
-验证 v0.3.0 新增的价格过滤(3-120 元)+ 流动性前 80% 配置后的实际股票池大小。
+验证价格过滤(默认 3-70 元)+ 涨跌停过滤 + 流动性分位配置后的实际股票池大小。
 
 用法:
     python scripts/check_universe_size.py
@@ -17,15 +17,19 @@ import pandas as pd
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.quant.data import cache as cm
 from tradingagents.quant.data.universe import (
-    _get_calendar, _get_first_dates_per_stock, get_list_dates,
-    get_st_codes_on_date, is_main_board,
+    _get_calendar,
+    _get_first_dates_per_stock,
+    get_list_dates,
+    get_st_codes_on_date,
+    is_at_price_limit,
+    is_main_board,
 )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="统计 universe 过滤各阶段后的股票数")
-    parser.add_argument("--cache", default="daily_main_board_liquid",
-                        help="日线 cache 名(默认 daily_main_board_liquid)")
+    parser.add_argument("--cache", default="daily_main_board",
+                        help="日线 cache 名(默认 daily_main_board)")
     parser.add_argument("--date", default=None,
                         help="模拟日期 YYYY-MM-DD(默认 cache 最新日期)")
     parser.add_argument("--price-min", type=float, default=None,
@@ -65,7 +69,7 @@ def main() -> None:
 
     liquidity_window = 20
     min_listing_days = 60
-    window_start = on_date - pd.Timedelta(days=liquidity_window * 2)
+    window_start = on_date - pd.Timedelta(liquidity_window * 2, unit="D")
     df_window = daily_df[(daily_df["trade_date"] <= on_date) &
                          (daily_df["trade_date"] >= window_start)]
 
@@ -74,7 +78,7 @@ def main() -> None:
     first_dates_per_stock = _get_first_dates_per_stock(daily_df)
     on_date_idx = calendar.searchsorted(on_date, side="right")
 
-    eligible: list[tuple[str, float, float]] = []
+    eligible: list[tuple[str, float, float, float | None, float | None]] = []
     for code in non_st:
         grp = df_window[df_window["stock_code"] == code]
         if len(grp) == 0 or len(grp) < liquidity_window:
@@ -94,25 +98,42 @@ def main() -> None:
         if (on_date_idx - first_idx) < min_listing_days:
             continue
 
-        eligible.append((code, float(recent["amount"].mean()), float(recent["close"].iloc[-1])))
+        last_row = recent.iloc[-1]
+        pre_close = last_row.get("pre_close") if "pre_close" in recent.columns else None
+        pre_close = None if pd.isna(pre_close) else float(pre_close)
+        change_pct = last_row.get("change_pct") if "change_pct" in recent.columns else None
+        change_pct = None if pd.isna(change_pct) else float(change_pct)
+        eligible.append((
+            code,
+            float(recent["amount"].mean()),
+            float(recent["close"].iloc[-1]),
+            pre_close,
+            change_pct,
+        ))
 
     print(f"[阶段4] 数据完整性(20日窗口/上市60天/未停牌): {len(eligible):>6,}  (剔除 {len(non_st) - len(eligible):,} 只)")
 
-    after_price = [(c, amt, p) for c, amt, p in eligible
+    after_price = [(c, amt, p, pc, chg) for c, amt, p, pc, chg in eligible
                    if (price_min is None or p >= price_min) and
                       (price_max is None or p <= price_max)]
     filtered_out = len(eligible) - len(after_price)
     print(f"[阶段5] 价格过滤后({price_min}-{price_max}元): {len(after_price):>6,}  (剔除 {filtered_out:,} 只)")
 
-    after_price.sort(key=lambda x: x[1], reverse=True)
-    keep_n = max(1, int(len(after_price) * percentile))
-    final = after_price[:keep_n]
-    print(f"[阶段6] 流动性前 {percentile*100:.0f}%:        {len(final):>6,}  (剔除 {len(after_price) - len(final):,} 只)")
+    after_limit = [
+        (c, amt, p, pc, chg) for c, amt, p, pc, chg in after_price
+        if not is_at_price_limit(c, close=p, pre_close=pc, change_pct=chg)
+    ]
+    print(f"[阶段6] 涨跌停过滤后:            {len(after_limit):>6,}  (剔除 {len(after_price) - len(after_limit):,} 只)")
+
+    after_limit.sort(key=lambda x: x[1], reverse=True)
+    keep_n = max(1, int(len(after_limit) * percentile))
+    final = after_limit[:keep_n]
+    print(f"[阶段7] 流动性前 {percentile*100:.0f}%:        {len(final):>6,}  (剔除 {len(after_limit) - len(final):,} 只)")
     print("-" * 60)
 
     if final:
-        prices = [p for _, _, p in final]
-        amounts = [amt for _, amt, _ in final]
+        prices = [p for _, _, p, _, _ in final]
+        amounts = [amt for _, amt, _, _, _ in final]
         med_p = sorted(prices)[len(prices) // 2]
         med_a = sorted(amounts)[len(amounts) // 2]
         print(f"最终池股价: min={min(prices):.2f} / med={med_p:.2f} / max={max(prices):.2f}")

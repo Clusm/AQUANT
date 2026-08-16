@@ -37,7 +37,6 @@ from web.stock_display import (
     strip_think_tags,
 )
 
-
 _FPDF_VERSION = getattr(_fpdf_mod, "__version__", None) or getattr(_fpdf_mod, "FPDF_VERSION", "0")
 
 _PDF_FONT_ENV = "TRADINGAGENTS_PDF_FONT"
@@ -351,6 +350,9 @@ class _ReportPDF(FPDF):
         self.ticker_label = stock_display_label(ticker, final_state)
         self.trade_date = trade_date
         self.signal = signal
+        # fpdf 的 CJK 字体没有 emoji 字形;PDF 封面只写文字标签,
+        # 颜色仍按原始 signal 解析。
+        self.signal_text = signal_style(signal)[1]
         regular_font, bold_font = _find_cjk_fonts()
 
         try:
@@ -427,7 +429,7 @@ class _ReportPDF(FPDF):
         r, g, b = _signal_color(self.signal)
         self._use_font("B", 40)
         self.set_text_color(r, g, b)
-        self.cell(0, 20, self.signal, align="C")
+        self.cell(0, 20, self.signal_text, align="C")
         self.ln(20)
 
         self._use_font("", 9)

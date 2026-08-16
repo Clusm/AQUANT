@@ -1,0 +1,25 @@
+# 统一行尾,避免 Windows CRLF 反复触发 "LF will be replaced by CRLF" 警告
+* text=auto
+
+*.py      text eol=lf
+*.md      text eol=lf
+*.toml    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.json    text eol=lf
+*.txt     text eol=lf
+*.example text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# 二进制文件不参与换行转换
+*.parquet binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.pdf     binary
+*.pkl     binary

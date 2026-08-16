@@ -40,7 +40,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.quant.data import cache as cm
 from tradingagents.quant.features.pipeline import (
-    get_weekly_bars, get_monthly_bars,
+    get_monthly_bars,
+    get_weekly_bars,
 )
 
 
@@ -54,7 +55,7 @@ def precompute(daily_cache_name: str) -> int:
     print("=" * 80)
 
     # Step 1: load daily cache
-    print(f"\n[1/4] 加载 daily cache...")
+    print("\n[1/4] 加载 daily cache...")
     if not cm.exists(daily_cache_name):
         print(f"  错误: {daily_cache_name} 不存在")
         return 1
@@ -65,7 +66,6 @@ def precompute(daily_cache_name: str) -> int:
     print(f"  rows={len(daily_df):,}, codes={daily_df['stock_code'].nunique()}, last={last_date.date()}")
 
     # Step 2: 失效检查
-    daily_meta = cm.load_meta(daily_cache_name) or {}
     src_end = str(last_date.date())
     src_rows = len(daily_df)
     need_rebuild = False
@@ -82,7 +82,7 @@ def precompute(daily_cache_name: str) -> int:
     print(f"\n[2/4] bars cache 需要更新(源最新 {src_end})")
 
     # Step 3: 计算周线/月线 bars
-    print(f"\n[3/4] 计算周线/月线 bars...")
+    print("\n[3/4] 计算周线/月线 bars...")
     t0 = time.time()
     weekly_bars = get_weekly_bars(daily_df)
     print(f"  weekly done in {time.time()-t0:.1f}s, rows={len(weekly_bars):,}, cols={len(weekly_bars.columns)}")
@@ -91,7 +91,7 @@ def precompute(daily_cache_name: str) -> int:
     print(f"  monthly done in {time.time()-t0:.1f}s, rows={len(monthly_bars):,}, cols={len(monthly_bars.columns)}")
 
     # Step 4: 保存
-    print(f"\n[4/4] 保存 bars parquet...")
+    print("\n[4/4] 保存 bars parquet...")
     t0 = time.time()
     cm.save(weekly_name, weekly_bars, meta={
         "source_cache": daily_cache_name,
@@ -117,7 +117,7 @@ def precompute(daily_cache_name: str) -> int:
     print(f"  monthly saved in {time.time()-t0:.1f}s, size={m_size:.1f}MB")
 
     print(f"\n{'='*80}")
-    print(f"预计算完成:")
+    print("预计算完成:")
     print(f"  {weekly_name}: {len(weekly_bars):,} rows, {w_size:.1f}MB")
     print(f"  {monthly_name}: {len(monthly_bars):,} rows, {m_size:.1f}MB")
     print(f"  源最新日期: {last_date.date()}")
@@ -126,7 +126,7 @@ def precompute(daily_cache_name: str) -> int:
 
 
 def main():
-    default_cache = DEFAULT_CONFIG.get("quant_daily_cache_name", "daily_main_board_liquid")
+    default_cache = DEFAULT_CONFIG.get("quant_daily_cache_name", "daily_main_board")
     parser = argparse.ArgumentParser(description="预计算 weekly/monthly bars 到 parquet")
     parser.add_argument("--cache", default=default_cache,
                         help=f"daily cache 名(默认 {default_cache})")

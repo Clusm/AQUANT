@@ -1,48 +1,110 @@
 # Import from vendor-specific modules
-from .y_finance import (
-    get_YFin_data_online,
-    get_stock_stats_indicators_window,
-    get_fundamentals as get_yfinance_fundamentals,
-    get_balance_sheet as get_yfinance_balance_sheet,
-    get_cashflow as get_yfinance_cashflow,
-    get_income_statement as get_yfinance_income_statement,
-    get_insider_transactions as get_yfinance_insider_transactions,
-)
-from .yfinance_news import get_news_yfinance, get_global_news_yfinance
-from .alpha_vantage import (
-    get_stock as get_alpha_vantage_stock,
-    get_indicator as get_alpha_vantage_indicator,
-    get_fundamentals as get_alpha_vantage_fundamentals,
-    get_balance_sheet as get_alpha_vantage_balance_sheet,
-    get_cashflow as get_alpha_vantage_cashflow,
-    get_income_statement as get_alpha_vantage_income_statement,
-    get_insider_transactions as get_alpha_vantage_insider_transactions,
-    get_news as get_alpha_vantage_news,
-    get_global_news as get_alpha_vantage_global_news,
-)
-from .alpha_vantage_common import AlphaVantageRateLimitError
+import hashlib
+import threading
+import time
+
 from .a_stock import (
-    get_stock_data as get_astock_stock_data,
-    get_indicators as get_astock_indicators,
-    get_fundamentals as get_astock_fundamentals,
     get_balance_sheet as get_astock_balance_sheet,
+)
+from .a_stock import (
     get_cashflow as get_astock_cashflow,
-    get_income_statement as get_astock_income_statement,
-    get_news as get_astock_news,
-    get_global_news as get_astock_global_news,
-    get_insider_transactions as get_astock_insider_transactions,
-    get_profit_forecast as get_astock_profit_forecast,
-    get_hot_stocks as get_astock_hot_stocks,
-    get_northbound_flow as get_astock_northbound_flow,
+)
+from .a_stock import (
     get_concept_blocks as get_astock_concept_blocks,
-    get_fund_flow as get_astock_fund_flow,
+)
+from .a_stock import (
     get_dragon_tiger_board as get_astock_dragon_tiger_board,
-    get_lockup_expiry as get_astock_lockup_expiry,
+)
+from .a_stock import (
+    get_fund_flow as get_astock_fund_flow,
+)
+from .a_stock import (
+    get_fundamentals as get_astock_fundamentals,
+)
+from .a_stock import (
+    get_global_news as get_astock_global_news,
+)
+from .a_stock import (
+    get_hot_stocks as get_astock_hot_stocks,
+)
+from .a_stock import (
+    get_income_statement as get_astock_income_statement,
+)
+from .a_stock import (
+    get_indicators as get_astock_indicators,
+)
+from .a_stock import (
     get_industry_comparison as get_astock_industry_comparison,
 )
+from .a_stock import (
+    get_insider_transactions as get_astock_insider_transactions,
+)
+from .a_stock import (
+    get_lockup_expiry as get_astock_lockup_expiry,
+)
+from .a_stock import (
+    get_news as get_astock_news,
+)
+from .a_stock import (
+    get_northbound_flow as get_astock_northbound_flow,
+)
+from .a_stock import (
+    get_profit_forecast as get_astock_profit_forecast,
+)
+from .a_stock import (
+    get_stock_data as get_astock_stock_data,
+)
+from .alpha_vantage import (
+    get_balance_sheet as get_alpha_vantage_balance_sheet,
+)
+from .alpha_vantage import (
+    get_cashflow as get_alpha_vantage_cashflow,
+)
+from .alpha_vantage import (
+    get_fundamentals as get_alpha_vantage_fundamentals,
+)
+from .alpha_vantage import (
+    get_global_news as get_alpha_vantage_global_news,
+)
+from .alpha_vantage import (
+    get_income_statement as get_alpha_vantage_income_statement,
+)
+from .alpha_vantage import (
+    get_indicator as get_alpha_vantage_indicator,
+)
+from .alpha_vantage import (
+    get_insider_transactions as get_alpha_vantage_insider_transactions,
+)
+from .alpha_vantage import (
+    get_news as get_alpha_vantage_news,
+)
+from .alpha_vantage import (
+    get_stock as get_alpha_vantage_stock,
+)
+from .alpha_vantage_common import AlphaVantageRateLimitError
 
 # Configuration and routing logic
 from .config import get_config
+from .y_finance import (
+    get_balance_sheet as get_yfinance_balance_sheet,
+)
+from .y_finance import (
+    get_cashflow as get_yfinance_cashflow,
+)
+from .y_finance import (
+    get_fundamentals as get_yfinance_fundamentals,
+)
+from .y_finance import (
+    get_income_statement as get_yfinance_income_statement,
+)
+from .y_finance import (
+    get_insider_transactions as get_yfinance_insider_transactions,
+)
+from .y_finance import (
+    get_stock_stats_indicators_window,
+    get_YFin_data_online,
+)
+from .yfinance_news import get_global_news_yfinance, get_news_yfinance
 
 # Tools organized by category
 TOOLS_CATEGORIES = {
@@ -196,31 +258,64 @@ def get_vendor(category: str, method: str = None) -> str:
     # Fall back to category-level configuration
     return config.get("data_vendors", {}).get(category, "default")
 
+_TOOL_CACHE: dict[str, tuple[float, str]] = {}
+_TOOL_CACHE_TTL = 180.0
+_TOOL_CACHE_LOCK = threading.Lock()
+
+
+def _tool_cache_key(method: str, args: tuple, kwargs: dict) -> str:
+    payload = repr((method, args, tuple(sorted(kwargs.items()))))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def clear_tool_result_cache() -> None:
+    """Clear in-process vendor result cache (used before a fresh analysis run)."""
+    with _TOOL_CACHE_LOCK:
+        _TOOL_CACHE.clear()
+
+
 def route_to_vendor(method: str, *args, **kwargs):
-    """Route method calls to appropriate vendor implementation with fallback support."""
+    """Route method calls to appropriate vendor implementation with fallback support.
+
+    Seven analysts repeatedly request the same data; successful vendor results
+    are cached for 180s by (method, args) so batch analysis does not re-hit the
+    same endpoint dozens of times.
+    """
+    if method not in VENDOR_METHODS:
+        raise ValueError(f"Method '{method}' not supported")
+
+    cache_key = _tool_cache_key(method, args, kwargs)
+    now = time.monotonic()
+    with _TOOL_CACHE_LOCK:
+        cached = _TOOL_CACHE.get(cache_key)
+        if cached is not None and now - cached[0] < _TOOL_CACHE_TTL:
+            return cached[1]
+
     category = get_category_for_method(method)
     vendor_config = get_vendor(category, method)
     primary_vendors = [v.strip() for v in vendor_config.split(',')]
 
-    if method not in VENDOR_METHODS:
-        raise ValueError(f"Method '{method}' not supported")
-
-    # Build fallback chain: primary vendors first, then remaining available vendors
     all_available_vendors = list(VENDOR_METHODS[method].keys())
     fallback_vendors = primary_vendors.copy()
     for vendor in all_available_vendors:
         if vendor not in fallback_vendors:
             fallback_vendors.append(vendor)
 
+    result = None
     for vendor in fallback_vendors:
         if vendor not in VENDOR_METHODS[method]:
             continue
-
         vendor_impl = VENDOR_METHODS[method][vendor]
-
         try:
-            return vendor_impl(*args, **kwargs)
+            result = vendor_impl(*args, **kwargs)
+            break
         except AlphaVantageRateLimitError:
             continue  # Only rate limits trigger fallback
 
-    raise RuntimeError(f"No available vendor for '{method}'")
+    if result is None:
+        raise RuntimeError(f"No available vendor for '{method}'")
+
+    if isinstance(result, str):
+        with _TOOL_CACHE_LOCK:
+            _TOOL_CACHE[cache_key] = (now, result)
+    return result

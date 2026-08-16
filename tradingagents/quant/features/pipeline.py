@@ -4,10 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from tradingagents.quant.features.factors import (amount_zscore, consecutive_limit_up, limit_distance,
-                              turnover_zscore)
+from tradingagents.quant.features.factors import amount_zscore, consecutive_limit_up, limit_distance, turnover_zscore
 from tradingagents.quant.features.indicators import add_all_indicators
-
 
 FEATURE_COLUMNS = [
     "ma5", "ma10", "ma20", "ma60",
@@ -33,6 +31,37 @@ WEEKLY_FEATURE_COLUMNS = [
     "wmacd_golden_cross", "wmacd_gc_recent",
     "wrsi_14", "wcci_20",
 ]
+
+
+# 特征依赖:请求某列时,先计算其依赖列。
+FEATURE_DEPENDENCIES: dict[str, set[str]] = {
+    "ma_alignment": {"ma5", "ma10", "ma20"},
+    "above_ma20": {"ma20"},
+    "above_ma5": {"ma5"},
+    "macd_golden_cross": {"macd_dif", "macd_dea"},
+    "macd_hist": {"macd_dif", "macd_dea"},
+    "boll_pct_b": {"boll_upper", "boll_mid", "boll_lower"},
+    "atr_pct": {"atr_14"},
+    "pullback_ma20": {"ma20"},
+    "close_to_ma5": {"ma5"},
+    "close_to_ma20": {"ma20"},
+    "close_to_ma60": {"ma60"},
+    "mcap_score": {"circ_market_cap"},
+}
+
+
+def resolve_feature_columns(requested: set[str]) -> set[str]:
+    """递归展开特征依赖,返回实际需要计算的列集合。"""
+    needed = set(requested)
+    changed = True
+    while changed:
+        changed = False
+        for col in list(needed):
+            for dep in FEATURE_DEPENDENCIES.get(col, ()):
+                if dep not in needed:
+                    needed.add(dep)
+                    changed = True
+    return needed
 
 
 MONTHLY_FEATURE_COLUMNS = [
@@ -93,28 +122,42 @@ _BFV_CACHE: dict = {}
 _BFV_CACHE_CODES: dict[tuple, set[str]] = {}
 
 
-def _make_cache_key(df: pd.DataFrame, min_rows: int) -> tuple:
+def _make_cache_key(df: pd.DataFrame, min_rows: int,
+                    columns: set[str] | None = None) -> tuple:
     """内容指纹: 基于数据特征而非对象 id()。
 
     M6: 加 close 求和作为轻量内容指纹,避免相同行数/日期范围但内容不同的数据误命中缓存。
+    列子集也进入 key,避免全量特征缓存被按需子集误命中。
     """
+    cols_key = "ALL" if columns is None else tuple(sorted(columns))
     try:
         return (len(df), min_rows, df['stock_code'].nunique(),
                 df['trade_date'].min(), df['trade_date'].max(),
-                float(df['close'].sum()))
+                float(df['close'].sum()), cols_key)
     except Exception:
-        return (id(df), min_rows)
+        return (id(df), min_rows, cols_key)
 
 
-def build_features_vectorized(daily_df: pd.DataFrame, min_rows: int = 30) -> pd.DataFrame:
-    """V34: 向量化计算全部股票的特征(替代 1488 次 build_features_for_stock 串行循环)。
+def build_features_vectorized(
+    daily_df: pd.DataFrame,
+    min_rows: int = 30,
+    columns: list[str] | None = None,
+) -> pd.DataFrame:
+    """向量化计算全部股票的特征。
 
-    与 build_features_for_stock 输出完全一致,但用 groupby.transform 一次性算完所有股票。
+    columns=None 时计算全部 FEATURE_COLUMNS;传入子集时按依赖图只计算需要的列。
+    基础行情列(stock_code/trade_date/OHLCV/amount 等)始终保留。
 
     要求:daily_df 已按 (stock_code, trade_date) 排序。
-    返回:含 stock_code, trade_date + 全部特征列的 DataFrame(过滤 < min_rows 行的股票)。
+    返回:过滤 < min_rows 行股票后的特征 DataFrame。
     """
-    cache_key = _make_cache_key(daily_df, min_rows)
+    requested = set(FEATURE_COLUMNS if columns is None else columns)
+    needed = resolve_feature_columns(requested)
+
+    def wants(*names: str) -> bool:
+        return any(n in needed for n in names)
+
+    cache_key = _make_cache_key(daily_df, min_rows, requested)
     if cache_key in _BFV_CACHE:
         return _BFV_CACHE[cache_key].copy()
 
@@ -133,29 +176,41 @@ def build_features_vectorized(daily_df: pd.DataFrame, min_rows: int = 30) -> pd.
     c = out["close"]
 
     # ---- MA(rolling mean)----
-    out["ma5"] = g["close"].transform(lambda s: s.rolling(5, min_periods=5).mean())
-    out["ma10"] = g["close"].transform(lambda s: s.rolling(10, min_periods=10).mean())
-    out["ma20"] = g["close"].transform(lambda s: s.rolling(20, min_periods=20).mean())
-    out["ma60"] = g["close"].transform(lambda s: s.rolling(60, min_periods=60).mean())
+    if wants("ma5"):
+        out["ma5"] = g["close"].transform(lambda s: s.rolling(5, min_periods=5).mean())
+    if wants("ma10"):
+        out["ma10"] = g["close"].transform(lambda s: s.rolling(10, min_periods=10).mean())
+    if wants("ma20"):
+        out["ma20"] = g["close"].transform(lambda s: s.rolling(20, min_periods=20).mean())
+    if wants("ma60"):
+        out["ma60"] = g["close"].transform(lambda s: s.rolling(60, min_periods=60).mean())
 
-    # ---- MA 多头排列 ----
-    out["ma_alignment"] = ((out["ma5"] > out["ma10"]) & (out["ma10"] > out["ma20"])).astype(float)
-    out["above_ma20"] = (c > out["ma20"]).astype(float)
-    out["above_ma5"] = (c > out["ma5"]).astype(float)
+    # ---- MA 多头排列 / 均线上下方 ----
+    if wants("ma_alignment"):
+        out["ma_alignment"] = ((out["ma5"] > out["ma10"]) & (out["ma10"] > out["ma20"])).astype(float)
+    if wants("above_ma20"):
+        out["above_ma20"] = (c > out["ma20"]).astype(float)
+    if wants("above_ma5"):
+        out["above_ma5"] = (c > out["ma5"]).astype(float)
 
     # ---- MACD(ewm)----
-    ema_fast = g["close"].transform(lambda s: s.ewm(span=12, adjust=False).mean())
-    ema_slow = g["close"].transform(lambda s: s.ewm(span=26, adjust=False).mean())
-    dif = ema_fast - ema_slow
-    dea = dif.groupby(out["stock_code"], observed=True).transform(
-        lambda s: s.ewm(span=9, adjust=False).mean())
-    out["macd_dif"] = dif
-    out["macd_dea"] = dea
-    out["macd_hist"] = (dif - dea) * 2
-    out["macd_golden_cross"] = (
-        (dif > dea) & (dif.groupby(out["stock_code"], observed=True).shift(1)
-                       <= dea.groupby(out["stock_code"], observed=True).shift(1))
-    ).astype(float)
+    if wants("macd_dif", "macd_dea", "macd_hist", "macd_golden_cross"):
+        ema_fast = g["close"].transform(lambda s: s.ewm(span=12, adjust=False).mean())
+        ema_slow = g["close"].transform(lambda s: s.ewm(span=26, adjust=False).mean())
+        dif = ema_fast - ema_slow
+        dea = dif.groupby(out["stock_code"], observed=True).transform(
+            lambda s: s.ewm(span=9, adjust=False).mean())
+        if wants("macd_dif"):
+            out["macd_dif"] = dif
+        if wants("macd_dea"):
+            out["macd_dea"] = dea
+        if wants("macd_hist"):
+            out["macd_hist"] = (dif - dea) * 2
+        if wants("macd_golden_cross"):
+            out["macd_golden_cross"] = (
+                (dif > dea) & (dif.groupby(out["stock_code"], observed=True).shift(1)
+                               <= dea.groupby(out["stock_code"], observed=True).shift(1))
+            ).astype(float)
 
     # ---- RSI(Wilder ewm)----
     def _rsi_transform(s, n):
@@ -167,87 +222,121 @@ def build_features_vectorized(daily_df: pd.DataFrame, min_rows: int = 30) -> pd.
         rs = avg_gain / avg_loss.replace(0, np.nan)
         return 100 - 100 / (1 + rs)
 
-    out["rsi_14"] = g["close"].transform(lambda s: _rsi_transform(s, 14))
-    out["rsi_6"] = g["close"].transform(lambda s: _rsi_transform(s, 6))
+    if wants("rsi_14"):
+        out["rsi_14"] = g["close"].transform(lambda s: _rsi_transform(s, 14))
+    if wants("rsi_6"):
+        out["rsi_6"] = g["close"].transform(lambda s: _rsi_transform(s, 6))
 
     # ---- Bollinger ----
-    boll_mid = g["close"].transform(lambda s: s.rolling(20, min_periods=20).mean())
-    boll_std = g["close"].transform(lambda s: s.rolling(20, min_periods=20).std())
-    boll_upper = boll_mid + 2 * boll_std
-    boll_lower = boll_mid - 2 * boll_std
-    out["boll_upper"] = boll_upper
-    out["boll_mid"] = boll_mid
-    out["boll_lower"] = boll_lower
-    out["boll_pct_b"] = (c - boll_lower) / (boll_upper - boll_lower).replace(0, np.nan)
+    if wants("boll_upper", "boll_mid", "boll_lower", "boll_pct_b"):
+        boll_mid = g["close"].transform(lambda s: s.rolling(20, min_periods=20).mean())
+        boll_std = g["close"].transform(lambda s: s.rolling(20, min_periods=20).std())
+        boll_upper = boll_mid + 2 * boll_std
+        boll_lower = boll_mid - 2 * boll_std
+        if wants("boll_upper"):
+            out["boll_upper"] = boll_upper
+        if wants("boll_mid"):
+            out["boll_mid"] = boll_mid
+        if wants("boll_lower"):
+            out["boll_lower"] = boll_lower
+        if wants("boll_pct_b"):
+            out["boll_pct_b"] = (c - boll_lower) / (boll_upper - boll_lower).replace(0, np.nan)
 
     # ---- ATR(ewm on TR)----
-    prev_close = g["close"].shift(1)
-    tr = pd.concat([
-        (out["high"] - out["low"]).abs(),
-        (out["high"] - prev_close).abs(),
-        (out["low"] - prev_close).abs(),
-    ], axis=1).max(axis=1)
-    atr_14 = tr.groupby(out["stock_code"], observed=True).transform(
-        lambda s: s.ewm(alpha=1 / 14, adjust=False).mean())
-    out["atr_14"] = atr_14
-    out["atr_pct"] = atr_14 / c
+    if wants("atr_14", "atr_pct"):
+        prev_close = g["close"].shift(1)
+        tr = pd.concat([
+            (out["high"] - out["low"]).abs(),
+            (out["high"] - prev_close).abs(),
+            (out["low"] - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        atr_14 = tr.groupby(out["stock_code"], observed=True).transform(
+            lambda s: s.ewm(alpha=1 / 14, adjust=False).mean())
+        if wants("atr_14"):
+            out["atr_14"] = atr_14
+        if wants("atr_pct"):
+            out["atr_pct"] = atr_14 / c
 
     # ---- Returns ----
-    out["ret_1d"] = g["close"].transform(lambda s: s.pct_change(1))
-    out["ret_5d"] = g["close"].transform(lambda s: s.pct_change(5))
-    out["ret_10d"] = g["close"].transform(lambda s: s.pct_change(10))
-    out["ret_20d"] = g["close"].transform(lambda s: s.pct_change(20))
+    if wants("ret_1d"):
+        out["ret_1d"] = g["close"].transform(lambda s: s.pct_change(1))
+    if wants("ret_5d"):
+        out["ret_5d"] = g["close"].transform(lambda s: s.pct_change(5))
+    if wants("ret_10d"):
+        out["ret_10d"] = g["close"].transform(lambda s: s.pct_change(10))
+    if wants("ret_20d"):
+        out["ret_20d"] = g["close"].transform(lambda s: s.pct_change(20))
 
     # ---- N 日新高 ----
-    out["new_high_20"] = (
-        c > g["close"].transform(lambda s: s.rolling(20, min_periods=20).max().shift(1))
-    ).astype(float)
-    out["new_high_60"] = (
-        c > g["close"].transform(lambda s: s.rolling(60, min_periods=60).max().shift(1))
-    ).astype(float)
+    if wants("new_high_20"):
+        out["new_high_20"] = (
+            c > g["close"].transform(lambda s: s.rolling(20, min_periods=20).max().shift(1))
+        ).astype(float)
+    if wants("new_high_60"):
+        out["new_high_60"] = (
+            c > g["close"].transform(lambda s: s.rolling(60, min_periods=60).max().shift(1))
+        ).astype(float)
 
     # ---- 回踩 MA20 ----
-    out["pullback_ma20"] = ((c - out["ma20"]).abs() / out["ma20"].replace(0, np.nan) < 0.02).astype(float)
+    if wants("pullback_ma20"):
+        out["pullback_ma20"] = ((c - out["ma20"]).abs() / out["ma20"].replace(0, np.nan) < 0.02).astype(float)
 
     # ---- 缺口 ----
-    out["gap"] = out["open"] / prev_close - 1
+    if wants("gap"):
+        prev_close = g["close"].shift(1)
+        out["gap"] = out["open"] / prev_close - 1
 
     # ---- 量比 ----
-    out["volume_ratio_5"] = out["volume"] / g["volume"].transform(
-        lambda s: s.rolling(5, min_periods=5).mean().shift(1)).replace(0, np.nan)
-    out["volume_ratio_10"] = out["volume"] / g["volume"].transform(
-        lambda s: s.rolling(10, min_periods=10).mean().shift(1)).replace(0, np.nan)
+    if wants("volume_ratio_5"):
+        out["volume_ratio_5"] = out["volume"] / g["volume"].transform(
+            lambda s: s.rolling(5, min_periods=5).mean().shift(1)).replace(0, np.nan)
+    if wants("volume_ratio_10"):
+        out["volume_ratio_10"] = out["volume"] / g["volume"].transform(
+            lambda s: s.rolling(10, min_periods=10).mean().shift(1)).replace(0, np.nan)
 
     # ---- 连板数 + 距涨停距离(groupby.transform 调原函数)----
-    out["consecutive_lu"] = g["close"].transform(consecutive_limit_up)
-    out["limit_dist"] = g["close"].transform(limit_distance)
+    if wants("consecutive_lu"):
+        out["consecutive_lu"] = g["close"].transform(consecutive_limit_up)
+    if wants("limit_dist"):
+        out["limit_dist"] = g["close"].transform(limit_distance)
 
     # ---- 换手率/成交额 z-score + 流通市值 ----
-    if "turnover_ratio" in out.columns and "amount" in out.columns:
-        tr = pd.to_numeric(out["turnover_ratio"], errors="coerce").replace(0, np.nan)
-        # turnover_zscore: per-stock rolling z-score
-        tr_valid = tr.groupby(out["stock_code"], observed=True).transform(lambda s: s.notna().sum())
-        out["turnover_zscore_20"] = tr.groupby(out["stock_code"], observed=True).transform(
-            lambda s: turnover_zscore(s, 20))
-        out.loc[tr_valid <= 20, "turnover_zscore_20"] = 0.0
-        out["amount_zscore_20"] = out.groupby("stock_code", observed=True)["amount"].transform(
-            lambda s: amount_zscore(s, 20))
-        out["circ_market_cap"] = out["amount"] / tr
-        out["mcap_score"] = -out["circ_market_cap"]
-    else:
-        out["turnover_zscore_20"] = 0.0
-        if "amount" in out.columns:
-            out["amount_zscore_20"] = out.groupby("stock_code", observed=True)["amount"].transform(
-                lambda s: amount_zscore(s, 20))
+    if wants("turnover_zscore_20", "amount_zscore_20", "circ_market_cap", "mcap_score"):
+        if "turnover_ratio" in out.columns and "amount" in out.columns:
+            tr = pd.to_numeric(out["turnover_ratio"], errors="coerce").replace(0, np.nan)
+            if wants("turnover_zscore_20"):
+                tr_valid = tr.groupby(out["stock_code"], observed=True).transform(lambda s: s.notna().sum())
+                out["turnover_zscore_20"] = tr.groupby(out["stock_code"], observed=True).transform(
+                    lambda s: turnover_zscore(s, 20))
+                out.loc[tr_valid <= 20, "turnover_zscore_20"] = 0.0
+            if wants("amount_zscore_20"):
+                out["amount_zscore_20"] = out.groupby("stock_code", observed=True)["amount"].transform(
+                    lambda s: amount_zscore(s, 20))
+            if wants("circ_market_cap", "mcap_score"):
+                out["circ_market_cap"] = out["amount"] / tr
+            if wants("mcap_score"):
+                out["mcap_score"] = -out["circ_market_cap"]
         else:
-            out["amount_zscore_20"] = 0.0
-        out["circ_market_cap"] = np.nan
-        out["mcap_score"] = np.nan
+            if wants("turnover_zscore_20"):
+                out["turnover_zscore_20"] = 0.0
+            if wants("amount_zscore_20"):
+                out["amount_zscore_20"] = (
+                    out.groupby("stock_code", observed=True)["amount"].transform(
+                        lambda s: amount_zscore(s, 20))
+                    if "amount" in out.columns else 0.0
+                )
+            if wants("circ_market_cap", "mcap_score"):
+                out["circ_market_cap"] = np.nan
+            if wants("mcap_score"):
+                out["mcap_score"] = np.nan
 
     # ---- close 距 MA 偏离 ----
-    out["close_to_ma5"] = (c - out["ma5"]) / out["ma5"].replace(0, np.nan)
-    out["close_to_ma20"] = (c - out["ma20"]) / out["ma20"].replace(0, np.nan)
-    out["close_to_ma60"] = (c - out["ma60"]) / out["ma60"].replace(0, np.nan)
+    if wants("close_to_ma5"):
+        out["close_to_ma5"] = (c - out["ma5"]) / out["ma5"].replace(0, np.nan)
+    if wants("close_to_ma20"):
+        out["close_to_ma20"] = (c - out["ma20"]) / out["ma20"].replace(0, np.nan)
+    if wants("close_to_ma60"):
+        out["close_to_ma60"] = (c - out["ma60"]) / out["ma60"].replace(0, np.nan)
 
     _BFV_CACHE[cache_key] = out
     _BFV_CACHE_CODES[cache_key] = set(out["stock_code"].unique())
@@ -260,7 +349,7 @@ def build_feature_matrix(daily_df: pd.DataFrame, lookback: int = 120) -> pd.Data
     lookback: 每只股票保留最近 lookback 个交易日。
     """
     parts: list[pd.DataFrame] = []
-    for code, grp in daily_df.groupby("stock_code"):
+    for _, grp in daily_df.groupby("stock_code"):
         grp = grp.sort_values("trade_date").tail(lookback).reset_index(drop=True)
         feats = build_features_for_stock(grp)
         if len(feats) > 0:

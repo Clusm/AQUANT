@@ -22,9 +22,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from tradingagents.graph.trading_graph import TradingAgentsGraph
-from tradingagents.default_config import DEFAULT_CONFIG
 from cli.main import save_report_to_disk
+from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.graph.trading_graph import TradingAgentsGraph
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
